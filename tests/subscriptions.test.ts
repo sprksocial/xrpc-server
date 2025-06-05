@@ -398,6 +398,8 @@ describe('Subscriptions', () => {
       messages.push(msg)
     }
 
+    // Wait up to 500ms for the close event to fire
+    await new Promise((resolve) => setTimeout(resolve, 500))
     expect(messages).toEqual([{ count: 1 }])
     expect(firstWasClosed).toBe(true)
     server.close()

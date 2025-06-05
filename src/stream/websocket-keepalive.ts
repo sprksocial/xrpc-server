@@ -59,7 +59,7 @@ export class WebSocketKeepAlive {
           yield chunk
         }
       } catch (_err) {
-        const err = _err?.['code'] === 'ABORT_ERR' ? _err['cause'] : _err
+        const err = isErrorWithCode(_err) && _err.code === 'ABORT_ERR' ? _err.cause : _err
         if (err instanceof DisconnectError) {
           // We cleanly end the connection
           this.ws?.close(err.wsCode)
@@ -114,13 +114,22 @@ class AbnormalCloseError extends Error {
   code = 'EWSABNORMALCLOSE'
 }
 
+interface ErrorWithCode {
+  code?: string
+  cause?: unknown
+}
+
+function isErrorWithCode(err: unknown): err is ErrorWithCode {
+  return err !== null && typeof err === 'object' && 'code' in err
+}
+
 function isReconnectable(err: unknown): boolean {
   // Network errors are reconnectable.
   // AuthenticationRequired and InvalidRequest XRPCErrors are not reconnectable.
   // @TODO method-specific XRPCErrors may be reconnectable, need to consider. Receiving
   // an invalid message is not current reconnectable, but the user can decide to skip them.
-  if (!err || typeof err['code'] !== 'string') return false
-  return networkErrorCodes.includes(err['code'])
+  if (!isErrorWithCode(err)) return false
+  return typeof err.code === 'string' && networkErrorCodes.includes(err.code)
 }
 
 const networkErrorCodes = [

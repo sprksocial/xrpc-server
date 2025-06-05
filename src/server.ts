@@ -53,6 +53,14 @@ import {
   validateInput,
   validateOutput,
 } from './util'
+import { WebSocket } from 'ws'
+import { Server as HttpServer } from 'http'
+
+type RequestWithLocals = Request & {
+  _xrpcLocals?: RequestLocals
+}
+
+const REQUEST_LOCALS_KEY = '_xrpcLocals'
 
 export function createServer(lexicons?: LexiconDoc[], options?: Options) {
   return new Server(lexicons, options)
@@ -275,7 +283,7 @@ export class Server {
         }
         const input = validateReqInput(req)
 
-        const locals: RequestLocals = req[kRequestLocals]
+        const locals: RequestLocals = (req as RequestWithLocals)._xrpcLocals!
 
         const reqCtx: XRPCReqContext = {
           params,
@@ -382,7 +390,8 @@ export class Server {
                 yield item
                 continue
               }
-              const type = item?.['$type']
+              const itemObj = item as Record<string, unknown>
+              const type = itemObj['$type']
               if (!check.is(item, schema.map) || typeof type !== 'string') {
                 yield new MessageFrame(item)
                 continue
@@ -397,7 +406,7 @@ export class Server {
               } else {
                 t = type
               }
-              const clone = { ...item }
+              const clone = { ...itemObj }
               delete clone['$type']
               yield new MessageFrame(clone, { type: t })
             }
@@ -415,21 +424,22 @@ export class Server {
 
   private enableStreamingOnListen(app: Application) {
     const _listen = app.listen
-    app.listen = (...args) => {
+    const serverInstance = this // capture the Server instance
+    app.listen = function(this: Application, ...args: Parameters<typeof _listen>) {
       // @ts-ignore the args spread
-      const httpServer = _listen.call(app, ...args)
+      const httpServer = _listen.call(this, ...args)
       httpServer.on('upgrade', (req, socket, head) => {
         const url = new URL(req.url || '', 'http://x')
         const sub = url.pathname.startsWith('/xrpc/')
-          ? this.subscriptions.get(url.pathname.replace('/xrpc/', ''))
+          ? serverInstance.subscriptions.get(url.pathname.replace('/xrpc/', ''))
           : undefined
         if (!sub) return socket.destroy()
-        sub.wss.handleUpgrade(req, socket, head, (ws) =>
-          sub.wss.emit('connection', ws, req),
+        sub.wss.handleUpgrade(req, socket, head, (client: WebSocket) =>
+          sub.wss.emit('connection', client, req),
         )
       })
       return httpServer
-    }
+    } as typeof _listen
   }
 
   private setupRouteRateLimits(nsid: string, config: XRPCHandlerConfig) {
@@ -505,12 +515,10 @@ function setHeaders(
   }
 }
 
-const kRequestLocals = Symbol('requestLocals')
-
 function createLocalsMiddleware(nsid: string): RequestHandler {
   return function (req, _res, next) {
     const locals: RequestLocals = { auth: undefined, nsid }
-    req[kRequestLocals] = locals
+    ;(req as RequestWithLocals)._xrpcLocals = locals
     return next()
   }
 }
@@ -527,7 +535,7 @@ function createAuthMiddleware(verifier: AuthVerifier): RequestHandler {
       if (isHandlerError(result)) {
         throw XRPCError.fromHandlerError(result)
       }
-      const locals: RequestLocals = req[kRequestLocals]
+      const locals: RequestLocals = (req as RequestWithLocals)._xrpcLocals!
       locals.auth = result
       next()
     } catch (err: unknown) {
@@ -540,7 +548,7 @@ function createErrorMiddleware({
   errorParser = (err) => XRPCError.fromError(err),
 }: Options): ErrorRequestHandler {
   return (err, req, res, next) => {
-    const locals: RequestLocals | undefined = req[kRequestLocals]
+    const locals: RequestLocals | undefined = (req as RequestWithLocals)._xrpcLocals
     const methodSuffix = locals ? ` method ${locals.nsid}` : ''
 
     const xrpcError = errorParser(err)
@@ -597,7 +605,7 @@ function toSimplifiedErrorLike(err: unknown): unknown {
       // Carry over non-enumerable properties
       message: err.message,
       name:
-        !Object.hasOwn(err, 'name') &&
+        !Object.prototype.hasOwnProperty.call(err, 'name') &&
         Object.prototype.toString.call(err.constructor) === '[object Function]'
           ? err.constructor.name // extract the class name for sub-classes of Error
           : err.name,

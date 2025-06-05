@@ -72,7 +72,8 @@ export class RateLimiter implements RateLimiterI {
     ) {
       return null
     }
-    if (this.bypassIps && this.bypassIps.includes(ctx.req.ip)) {
+    const ip = ctx.req.ip
+    if (this.bypassIps && ip && this.bypassIps.includes(ip)) {
       return null
     }
     const key = opts?.calcKey ? opts.calcKey(ctx) : this.calcKey(ctx)
@@ -123,7 +124,9 @@ export class RateLimiter implements RateLimiterI {
     try {
       await this.limiter.delete(key)
     } catch (cause) {
-      throw new Error(`rate limiter failed to reset key: ${key}`, { cause })
+      const error = new Error(`rate limiter failed to reset key: ${key}`)
+      ;(error as any).cause = cause
+      throw error
     }
   }
 }
@@ -197,5 +200,5 @@ export const getTightestLimit = (
 
 // when using a proxy, ensure headers are getting forwarded correctly: `app.set('trust proxy', true)`
 // https://expressjs.com/en/guide/behind-proxies.html
-const defaultKey: CalcKeyFn = (ctx: XRPCReqContext) => ctx.req.ip
+const defaultKey: CalcKeyFn = (ctx: XRPCReqContext) => ctx.req.ip || null
 const defaultPoints: CalcPointsFn = () => 1

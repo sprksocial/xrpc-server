@@ -11,6 +11,10 @@ import {
   httpResponseCodeToString,
 } from '@atproto/xrpc'
 
+type ErrorOptions = {
+  cause?: unknown
+}
+
 export type CatchallHandler = (
   req: express.Request,
   _res: express.Response,
@@ -192,7 +196,7 @@ export type HandlerRateLimitOpts = SharedRateLimitOpts | RouteRateLimitOpts
 export const isShared = (
   opts: HandlerRateLimitOpts,
 ): opts is SharedRateLimitOpts => {
-  return typeof opts['name'] === 'string'
+  return 'name' in opts && typeof (opts as SharedRateLimitOpts).name === 'string'
 }
 
 export type RateLimiterStatus = {
@@ -256,13 +260,18 @@ function mapFromClientError(error: XRPCClientError): {
 }
 
 export class XRPCError extends Error {
+  public cause?: unknown
+
   constructor(
     public type: ResponseType,
     public errorMessage?: string,
     public customErrorName?: string,
     options?: ErrorOptions,
   ) {
-    super(errorMessage, options)
+    super(errorMessage)
+    if (options?.cause) {
+      this.cause = options.cause
+    }
   }
 
   get statusCode(): number {
@@ -331,27 +340,25 @@ export class XRPCError extends Error {
 }
 
 export function isHandlerError(v: unknown): v is HandlerError {
+  if (!v || typeof v !== 'object') return false
+  const obj = v as Record<string, unknown>
   return (
-    !!v &&
-    typeof v === 'object' &&
-    typeof v['status'] === 'number' &&
-    (v['error'] === undefined || typeof v['error'] === 'string') &&
-    (v['message'] === undefined || typeof v['message'] === 'string')
+    typeof obj.status === 'number' &&
+    (obj.error === undefined || typeof obj.error === 'string') &&
+    (obj.message === undefined || typeof obj.message === 'string')
   )
 }
 
 export function isHandlerPipeThroughBuffer(
   v: HandlerOutput,
 ): v is HandlerPipeThroughBuffer {
-  // We only need to discriminate between possible HandlerOutput values
-  return v['buffer'] !== undefined
+  return 'buffer' in v && (v as HandlerPipeThroughBuffer).buffer !== undefined
 }
 
 export function isHandlerPipeThroughStream(
   v: HandlerOutput,
 ): v is HandlerPipeThroughStream {
-  // We only need to discriminate between possible HandlerOutput values
-  return v['stream'] !== undefined
+  return 'stream' in v && (v as HandlerPipeThroughStream).stream !== undefined
 }
 
 export class InvalidRequestError extends XRPCError {

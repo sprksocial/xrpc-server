@@ -2,6 +2,11 @@ import { ClientOptions } from 'ws'
 import { ensureChunkIsMessage } from './stream'
 import { WebSocketKeepAlive } from './websocket-keepalive'
 
+interface MessageBody {
+  $type?: string
+  [key: string]: unknown
+}
+
 export class Subscription<T = unknown> {
   constructor(
     public opts: ClientOptions & {
@@ -35,9 +40,9 @@ export class Subscription<T = unknown> {
     for await (const chunk of ws) {
       const message = await ensureChunkIsMessage(chunk)
       const t = message.header.t
-      const clone = message.body !== undefined ? { ...message.body } : undefined
+      const clone = message.body !== undefined ? { ...message.body } as MessageBody : undefined
       if (clone !== undefined && t !== undefined) {
-        clone['$type'] = t.startsWith('#') ? this.opts.method + t : t
+        clone.$type = t.startsWith('#') ? this.opts.method + t : t
       }
       const result = this.opts.validate(clone)
       if (result !== undefined) {
