@@ -1,17 +1,21 @@
-# @atproto/xrpc-server: atproto HTTP API server library
+# xrpc-server: atproto HTTP API server library
 
-TypeScript library for implementing [atproto](https://atproto.com) HTTP API
-services, with Lexicon schema validation.
+A TypeScript library for implementing [atproto](https://atproto.com) HTTP API services, with Lexicon schema validation. This is a port of the original [@atproto/xrpc-server](https://www.npmjs.com/package/@atproto/xrpc-server) package to use Hono and Deno.
 
-[![NPM](https://img.shields.io/npm/v/@atproto/xrpc-server)](https://www.npmjs.com/package/@atproto/xrpc-server)
-[![Github CI Status](https://github.com/bluesky-social/atproto/actions/workflows/repo.yaml/badge.svg)](https://github.com/bluesky-social/atproto/actions/workflows/repo.yaml)
+## Features
+
+- Full Lexicon schema validation
+- Built on [Hono](https://hono.dev/) for high performance
+- TypeScript support
+- Rate limiting capabilities
+- Authentication support
+- Streaming support
 
 ## Usage
 
 ```typescript
 import { LexiconDoc } from "@atproto/lexicon";
-import * as xrpc from "@atproto/xrpc-server";
-import express from "express";
+import * as xrpcServer from "jsr:@sprk/xrpc-server";
 
 const lexicons: LexiconDoc[] = [
   {
@@ -32,41 +36,61 @@ const lexicons: LexiconDoc[] = [
   },
 ];
 
-// create xrpc server
-const server = xrpc.createServer(lexicons);
+// Create xrpc server
+const server = xrpcServer.createServer(lexicons);
 
-function ping(ctx: {
-  auth: xrpc.HandlerAuth | undefined;
-  params: xrpc.Params;
-  input: xrpc.HandlerInput | undefined;
-  req: express.Request;
-  res: express.Response;
-}) {
-  return {
-    encoding: "application/json",
-    body: { message: ctx.params.message },
-  };
-}
+// Add a method handler
+server.method("io.example.ping", {
+  handler: ({ params }: xrpcServer.XRPCReqContext) => {
+    return {
+      encoding: "application/json",
+      body: { message: params.message },
+    };
+  },
+});
 
-server.method("io.example.ping", ping);
+// Start the server
+const port = 8080;
+Deno.serve({ port }, server.app.fetch);
+```
 
-// mount in express
-const app = express();
-app.use(server.router);
-app.listen(8080);
+## Authentication
+
+The library supports various authentication methods including Basic Auth and JWT:
+
+```typescript
+server.method("io.example.authTest", {
+  auth: createBasicAuth({ username: "admin", password: "password" }),
+  handler: ({ auth }) => {
+    return {
+      encoding: "application/json",
+      body: {
+        username: auth?.credentials?.username,
+      },
+    };
+  },
+});
+```
+
+## Rate Limiting
+
+Rate limiting can be configured globally or per-route:
+
+```typescript
+const options = {
+  rateLimits: {
+    creator: createRateLimiter,
+    global: [{
+      name: "global",
+      durationMs: 60000,
+      points: 100,
+    }],
+  },
+};
+
+const server = xrpcServer.createServer(lexicons, options);
 ```
 
 ## License
 
-This project is dual-licensed under MIT and Apache 2.0 terms:
-
-- MIT license
-  ([LICENSE-MIT.txt](https://github.com/bluesky-social/atproto/blob/main/LICENSE-MIT.txt)
-  or http://opensource.org/licenses/MIT)
-- Apache License, Version 2.0,
-  ([LICENSE-APACHE.txt](https://github.com/bluesky-social/atproto/blob/main/LICENSE-APACHE.txt)
-  or http://www.apache.org/licenses/LICENSE-2.0)
-
-Downstream projects and end users may chose either license individually, or both
-together, at their discretion. The motivation for this dual-licensing is the
-additional software patent assurance provided by Apache 2.0.
+MIT License
