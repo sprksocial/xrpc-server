@@ -12,13 +12,14 @@ import {
   Lexicons,
   lexToJson,
 } from '@atproto/lexicon'
-import log, { LOGGER_NAME } from './logger'
-import { consumeMany, resetMany } from './rate-limiter'
-import { ErrorFrame, Frame, MessageFrame, XrpcStreamServer } from './stream'
+import log, { LOGGER_NAME } from './logger.ts'
+import { consumeMany, resetMany } from './rate-limiter.ts'
+import { ErrorFrame, Frame, MessageFrame, XrpcStreamServer } from './stream/index.ts'
 import {
   AuthVerifier,
   HandlerAuth,
   HandlerPipeThrough,
+  HandlerPipeThroughBuffer,
   HandlerSuccess,
   InternalServerError,
   InvalidRequestError,
@@ -38,16 +39,17 @@ import {
   isHandlerPipeThroughBuffer,
   isHandlerPipeThroughStream,
   isShared,
-} from './types'
+} from './types.ts'
 import {
   decodeQueryParams,
   getQueryParams,
   validateInput,
   validateOutput,
-} from './util'
+} from './util.ts'
 import { WebSocket } from 'ws'
-import { Server as HttpServer, IncomingMessage } from 'http'
+import { Server as HttpServer, IncomingMessage } from 'node:http'
 import type { Context, Next, MiddlewareHandler } from 'hono'
+import { Buffer } from 'node:buffer'
 
 type RequestWithLocals = {
   _xrpcLocals?: RequestLocals
@@ -460,8 +462,8 @@ export class Server {
         } else if (isHandlerPipeThroughBuffer(output)) {
           const headers = new Headers()
           setHeaders(headers, output)
-          headers.set('Content-Type', output.encoding)
-          return new Response(output.buffer, {
+          headers.set('Content-Type', output.encoding as string)
+          return new Response(output.buffer as Buffer, {
             status: 200,
             headers
           })
@@ -525,7 +527,7 @@ export class Server {
       nsid,
       new XrpcStreamServer({
         noServer: true,
-        handler: async function* (req, signal) {
+        handler: async function* (req: IncomingMessage, signal: AbortSignal) {
           try {
             // authenticate request
             const auth = await config.auth?.({ req })

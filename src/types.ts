@@ -3,6 +3,7 @@ import { Readable } from 'node:stream'
 import { Context, Next } from 'hono'
 import { isHttpError } from 'http-errors'
 import { z } from 'zod'
+import { Buffer } from 'node:buffer'
 import {
   ResponseType,
   ResponseTypeStrings,
@@ -10,7 +11,7 @@ import {
   httpResponseCodeToName,
   httpResponseCodeToString,
 } from '@atproto/xrpc'
-import * as http from 'http'
+import * as http from 'node:http'
 
 type ErrorOptions = {
   cause?: unknown
@@ -266,7 +267,7 @@ function mapFromClientError(error: XRPCClientError): {
 }
 
 export class XRPCError extends Error {
-  public cause?: unknown
+  public override cause?: unknown
 
   constructor(
     public type: ResponseType,
@@ -531,7 +532,7 @@ export class MethodNotImplementedError extends XRPCError {
   }
 }
 
-export const nsid = (v: string) => {
+export const nsid = () => {
   try {
     // ... existing code ...
   } catch (e) {

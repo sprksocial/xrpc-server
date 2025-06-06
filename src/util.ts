@@ -1,7 +1,6 @@
 import assert from 'node:assert'
 import { IncomingMessage } from 'node:http'
 import { Duplex, Readable, pipeline } from 'node:stream'
-import mime from 'mime-types'
 import { MaxSizeChecker, createDecoders } from '@atproto/common'
 import {
   LexXrpcProcedure,
@@ -21,7 +20,8 @@ import {
   UndecodedParams,
   XRPCError,
   handlerSuccess,
-} from './types'
+} from './types.ts'
+import { Buffer } from 'node:buffer'
 
 export function decodeQueryParams(
   def: LexXrpcProcedure | LexXrpcQuery | LexXrpcSubscription,

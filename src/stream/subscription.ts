@@ -1,6 +1,6 @@
 import { ClientOptions } from 'ws'
-import { ensureChunkIsMessage } from './stream'
-import { WebSocketKeepAlive } from './websocket-keepalive'
+import { ensureChunkIsMessage } from './stream.ts'
+import { WebSocketKeepAlive } from './websocket-keepalive.ts'
 
 interface MessageBody {
   $type?: string

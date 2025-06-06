@@ -4,7 +4,7 @@ import {
   RateLimiterRedis,
   RateLimiterRes,
 } from 'rate-limiter-flexible'
-import { logger } from './logger'
+import { logger } from './logger.ts'
 import {
   CalcKeyFn,
   CalcPointsFn,
@@ -14,7 +14,7 @@ import {
   RateLimiterReset,
   RateLimiterStatus,
   XRPCReqContext,
-} from './types'
+} from './types.ts'
 
 export type RateLimiterOpts = {
   keyPrefix: string
@@ -126,8 +126,8 @@ export class RateLimiter implements RateLimiterI {
     try {
       await this.limiter.delete(key)
     } catch (cause) {
-      const error = new Error(`rate limiter failed to reset key: ${key}`)
-      ;(error as any).cause = cause
+      const error = new Error(`rate limiter failed to reset key: ${key}`) as Error & { cause: unknown }
+      error.cause = cause
       throw error
     }
   }

@@ -1,7 +1,7 @@
 import { ClientOptions, WebSocket } from 'ws'
 import { SECOND, wait } from '@atproto/common'
-import { streamByteChunks } from './stream'
-import { CloseCode, DisconnectError } from './types'
+import { streamByteChunks } from './stream.ts'
+import { CloseCode, DisconnectError } from './types.ts'
 
 export class WebSocketKeepAlive {
   public ws: WebSocket | null = null
@@ -80,7 +80,7 @@ export class WebSocketKeepAlive {
 
   startHeartbeat(ws: WebSocket) {
     let isAlive = true
-    let heartbeatInterval: NodeJS.Timeout | null = null
+    let heartbeatInterval: ReturnType<typeof setInterval> | null = null
 
     const checkAlive = () => {
       if (!isAlive) {

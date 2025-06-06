@@ -1,13 +1,12 @@
 import { once } from 'node:events'
 import * as http from 'node:http'
-import * as xrpc from '../src'
-import { AuthRequiredError } from '../src'
+import * as xrpc from '../src/index.ts'
+import { AuthRequiredError } from '../src/types.ts'
 import { serve } from '@hono/node-server'
-import { Context } from 'hono'
+import { Buffer } from 'node:buffer'
 
 export async function createServer(
-  server: xrpc.Server,
-  onError?: (err: Error, c: Context) => Response | void,
+  server: xrpc.Server 
 ): Promise<http.Server> {
   const httpServer = serve({
     fetch: server.app.fetch,

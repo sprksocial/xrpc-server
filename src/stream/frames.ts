@@ -8,7 +8,7 @@ import {
   MessageFrameHeader,
   errorFrameBody,
   frameHeader,
-} from './types'
+} from './types.ts'
 
 export abstract class Frame {
   abstract header: FrameHeader
@@ -62,7 +62,7 @@ export abstract class Frame {
 
 export class MessageFrame<T = Record<string, unknown>> extends Frame {
   header: MessageFrameHeader
-  body: T
+  override body: T
   constructor(body: T, opts?: { type?: string }) {
     super()
     this.header =
@@ -78,7 +78,7 @@ export class MessageFrame<T = Record<string, unknown>> extends Frame {
 
 export class ErrorFrame<T extends string = string> extends Frame {
   header: ErrorFrameHeader
-  body: ErrorFrameBody<T>
+  override body: ErrorFrameBody<T>
   constructor(body: ErrorFrameBody<T>) {
     super()
     this.header = { op: FrameType.Error }
