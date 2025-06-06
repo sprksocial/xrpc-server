@@ -29,19 +29,20 @@ export function decodeQueryParams(
   params: UndecodedParams,
 ): Params {
   const decoded: Params = {}
-  for (const k in params) {
+  for (const k in def.parameters?.properties) {
+    const property = def.parameters?.properties[k]
     const val = params[k]
-    const property = def.parameters?.properties?.[k]
-    if (property) {
+    if (property && val !== undefined) {
       if (property.type === 'array') {
-        const vals: (typeof val)[] = []
-        decoded[k] = val
-          ? vals
-              .concat(val) // Cast to array
-              .flatMap((v) => decodeQueryParam(property.items.type, v) ?? [])
-          : undefined
+        const vals = (Array.isArray(val) ? val : [val]).filter(
+          (v) => v !== undefined,
+        )
+        decoded[k] = vals
+          .map((v) => decodeQueryParam(property.items.type, v))
+          .filter((v) => v !== undefined) as (string | number | boolean)[]
       } else {
-        decoded[k] = decodeQueryParam(property.type, val)
+        const actualVal = Array.isArray(val) ? val[0] : val
+        decoded[k] = decodeQueryParam(property.type, actualVal)
       }
     }
   }
@@ -67,28 +68,52 @@ export function decodeQueryParam(
   }
 }
 
-export function getQueryParams(url = ''): Record<string, string | string[]> {
+export function getQueryParams(url = ''): Record<string, string[]> {
   const { searchParams } = new URL(url ?? '', 'http://x')
-  const result: Record<string, string | string[]> = {}
+  const result: Record<string, string[]> = {}
   for (const key of searchParams.keys()) {
     result[key] = searchParams.getAll(key)
-    if (result[key].length === 1) {
-      result[key] = result[key][0]
-    }
   }
   return result
 }
 
-export function validateInput(
+// Add a type for a request-like object that works with both Express and Hono
+export type RequestLike = {
+  headers: { [key: string]: string | string[] | undefined }
+  body?: unknown
+  readableEnded?: boolean
+  method?: string
+  url?: string
+  pipe?: (destination: any) => any
+  on?: (event: string, listener: (...args: any[]) => void) => any
+  removeListener?: (event: string, listener: (...args: any[]) => void) => any
+  destroy?: () => void
+  resume?: () => void
+  pause?: () => void
+  unpipe?: (destination?: any) => void
+}
+
+export async function validateInput(
   nsid: string,
   def: LexXrpcProcedure | LexXrpcQuery,
-  req: express.Request,
+  body: unknown,
+  headers: { [key: string]: string | string[] | undefined },
   opts: RouteOpts,
   lexicons: Lexicons,
-): HandlerInput | undefined {
-  // request expectation
+): Promise<HandlerInput | undefined> {
+  let processedBody = body
+  if (body instanceof ReadableStream) {
+    const reader = body.getReader()
+    const chunks: Uint8Array[] = []
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+    }
+    processedBody = Buffer.concat(chunks)
+  }
 
-  const bodyPresence = getBodyPresence(req)
+  const bodyPresence = getBodyPresence(processedBody, headers)
   if (bodyPresence === 'present' && (def.type !== 'procedure' || !def.input)) {
     throw new InvalidRequestError(
       `A request body was provided when none was expected`,
@@ -104,7 +129,10 @@ export function validateInput(
   }
 
   // mimetype
-  const inputEncoding = normalizeMime(req.headers['content-type'] || '')
+  const contentType = Array.isArray(headers['content-type'])
+    ? headers['content-type'][0]
+    : headers['content-type']
+  const inputEncoding = normalizeMime(contentType || '')
   if (
     def.input?.encoding &&
     (!inputEncoding || !isValidEncoding(def.input?.encoding, inputEncoding))
@@ -128,25 +156,16 @@ export function validateInput(
   // if input schema, validate
   if (def.input?.schema) {
     try {
-      const lexBody = req.body ? jsonToLex(req.body) : req.body
-      req.body = lexicons.assertValidXrpcInput(nsid, lexBody)
+      const lexBody = processedBody ? jsonToLex(processedBody) : processedBody
+      processedBody = lexicons.assertValidXrpcInput(nsid, lexBody)
     } catch (e) {
       throw new InvalidRequestError(e instanceof Error ? e.message : String(e))
     }
   }
 
-  // if middleware already got the body, we pass that along as input
-  // otherwise, we pass along a decoded readable stream
-  let body
-  if (req.readableEnded) {
-    body = req.body
-  } else {
-    body = decodeBodyStream(req, opts.blobLimit)
-  }
-
   return {
     encoding: inputEncoding,
-    body,
+    body: processedBody,
   }
 }
 
@@ -197,30 +216,47 @@ export function validateOutput(
   }
 }
 
-export function normalizeMime(v: string) {
-  if (!v) return false
-  const fullType = mime.contentType(v)
-  if (!fullType) return false
-  const shortType = fullType.split(';')[0]
-  if (!shortType) return false
-  return shortType
+export function normalizeMime(mime: string): string {
+  const [base] = mime.split(';')
+  return base.trim().toLowerCase()
 }
 
-function isValidEncoding(possibleStr: string, value: string) {
-  const possible = possibleStr.split(',').map((v) => v.trim())
-  const normalized = normalizeMime(value)
-  if (!normalized) return false
-  if (possible.includes('*/*')) return true
-  return possible.includes(normalized)
+function isValidEncoding(expected: string, actual: string): boolean {
+  if (expected === '*/*') return true
+  if (expected === actual) return true
+  if (expected === 'application/json' && actual === 'json') return true
+  return false
 }
 
-type BodyPresence = 'missing' | 'empty' | 'present'
-
-function getBodyPresence(req: express.Request): BodyPresence {
-  if (req.headers['transfer-encoding'] != null) return 'present'
-  if (req.headers['content-length'] === '0') return 'empty'
-  if (req.headers['content-length'] != null) return 'present'
-  return 'missing'
+function getBodyPresence(
+  body: unknown,
+  headers: { [key:string]: string | string[] | undefined },
+): 'present' | 'missing' {
+  if (body === undefined || body === null) {
+    return 'missing'
+  }
+  if (
+    typeof body === 'string' &&
+    body.length === 0 &&
+    !headers['content-type']
+  ) {
+    return 'missing'
+  }
+  if (
+    Buffer.isBuffer(body) &&
+    body.length === 0 &&
+    !headers['content-type']
+  ) {
+    return 'missing'
+  }
+  if (
+    body instanceof Uint8Array &&
+    body.length === 0 &&
+    !headers['content-type']
+  ) {
+    return 'missing'
+  }
+  return 'present'
 }
 
 export function processBodyAsBytes(req: express.Request): Promise<Uint8Array> {
@@ -232,11 +268,15 @@ export function processBodyAsBytes(req: express.Request): Promise<Uint8Array> {
 }
 
 function decodeBodyStream(
-  req: express.Request,
+  req: RequestLike,
   maxSize: number | undefined,
 ): Readable {
-  const contentEncoding = req.headers['content-encoding']
-  const contentLength = req.headers['content-length']
+  const contentEncoding = Array.isArray(req.headers['content-encoding'])
+    ? req.headers['content-encoding'][0]
+    : req.headers['content-encoding']
+  const contentLength = Array.isArray(req.headers['content-length'])
+    ? req.headers['content-length'][0]
+    : req.headers['content-length']
 
   const contentLengthParsed = contentLength
     ? parseInt(contentLength, 10)
@@ -278,9 +318,14 @@ function decodeBodyStream(
     transforms.push(maxSizeChecker)
   }
 
+  // If req is not a proper Readable stream, return undefined
+  if (!req.pipe || !req.on || !req.removeListener) {
+    return undefined as any
+  }
+
   return transforms.length > 0
-    ? (pipeline([req, ...transforms], () => {}) as Duplex)
-    : req
+    ? (pipeline([req as any, ...transforms], () => {}) as Duplex)
+    : req as any
 }
 
 export function serverTimingHeader(timings: ServerTiming[]) {

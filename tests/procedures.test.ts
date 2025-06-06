@@ -100,15 +100,9 @@ describe('Procedures', () => {
       params: xrpcServer.Params
       input?: xrpcServer.HandlerInput
     }) => {
-      if (!(ctx.input?.body instanceof Readable))
-        throw new Error('Input not readable')
-      const buffers: Buffer[] = []
-      for await (const data of ctx.input.body) {
-        buffers.push(data)
-      }
       return {
         encoding: 'application/octet-stream',
-        body: Buffer.concat(buffers),
+        body: ctx.input?.body,
       }
     },
   )

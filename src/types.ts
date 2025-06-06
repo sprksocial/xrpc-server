@@ -1,6 +1,6 @@
 import { IncomingMessage } from 'node:http'
 import { Readable } from 'node:stream'
-import express from 'express'
+import { Context, Next } from 'hono'
 import { isHttpError } from 'http-errors'
 import { z } from 'zod'
 import {
@@ -10,20 +10,23 @@ import {
   httpResponseCodeToName,
   httpResponseCodeToString,
 } from '@atproto/xrpc'
+import { LexiconDoc, Lexicons } from '@atproto/lexicon'
+import { WebSocket } from 'ws'
+import { Frame } from './stream'
+import * as http from 'http'
 
 type ErrorOptions = {
   cause?: unknown
 }
 
 export type CatchallHandler = (
-  req: express.Request,
-  _res: express.Response,
-  next: express.NextFunction,
+  c: Context,
+  next: () => Promise<void>,
 ) => unknown
 
 export type Options = {
   validateResponse?: boolean
-  catchall?: CatchallHandler
+  catchall?: (c: Context, next: Next) => Promise<Response | void>
   payload?: {
     jsonLimit?: number
     blobLimit?: number
@@ -47,7 +50,7 @@ export type Options = {
   errorParser?: (err: unknown) => XRPCError
 }
 
-export type UndecodedParams = (typeof express.request)['query']
+export type UndecodedParams = Record<string, string | string[]>
 
 export type Primitive = string | number | boolean
 export type Params = Record<string, Primitive | Primitive[] | undefined>
@@ -106,12 +109,19 @@ export type HandlerError = z.infer<typeof handlerError>
 export type HandlerOutput = HandlerSuccess | HandlerPipeThrough | HandlerError
 
 export type XRPCReqContext = {
-  auth: HandlerAuth | undefined
+  c: Context
   params: Params
   input: HandlerInput | undefined
-  req: express.Request
-  res: express.Response
+  auth: HandlerAuth | undefined
   resetRouteRateLimits: () => Promise<void>
+  req?: IncomingMessage
+}
+
+export type XRPCStreamReqContext = {
+  req: http.IncomingMessage
+  params: Params
+  auth: HandlerAuth | undefined
+  signal: AbortSignal
 }
 
 export type XRPCHandler = (
@@ -128,8 +138,7 @@ export type XRPCStreamHandler = (ctx: {
 export type AuthOutput = HandlerAuth | HandlerError
 
 export interface AuthVerifierContext {
-  req: express.Request
-  res: express.Response
+  c: Context
 }
 
 export type AuthVerifier = (
@@ -362,19 +371,14 @@ export function isHandlerPipeThroughStream(
 }
 
 export class InvalidRequestError extends XRPCError {
-  constructor(
-    errorMessage?: string,
-    customErrorName?: string,
-    options?: ErrorOptions,
-  ) {
-    super(ResponseType.InvalidRequest, errorMessage, customErrorName, options)
+  constructor(message = 'Invalid Request', error = 'InvalidRequest') {
+    super(ResponseType.InvalidRequest, message, error)
   }
+}
 
-  [Symbol.hasInstance](instance: unknown): boolean {
-    return (
-      instance instanceof XRPCError &&
-      instance.type === ResponseType.InvalidRequest
-    )
+export class PayloadTooLargeError extends XRPCError {
+  constructor(message = 'Request entity too large', error = 'PayloadTooLarge') {
+    super(ResponseType.PayloadTooLarge, message, error)
   }
 }
 
@@ -518,17 +522,8 @@ export class UpstreamTimeoutError extends XRPCError {
 }
 
 export class MethodNotImplementedError extends XRPCError {
-  constructor(
-    errorMessage?: string,
-    customErrorName?: string,
-    options?: ErrorOptions,
-  ) {
-    super(
-      ResponseType.MethodNotImplemented,
-      errorMessage,
-      customErrorName,
-      options,
-    )
+  constructor(message = 'Method Not Implemented', error = 'MethodNotImplemented') {
+    super(ResponseType.MethodNotImplemented, message, error)
   }
 
   [Symbol.hasInstance](instance: unknown): boolean {
@@ -536,5 +531,13 @@ export class MethodNotImplementedError extends XRPCError {
       instance instanceof XRPCError &&
       instance.type === ResponseType.MethodNotImplemented
     )
+  }
+}
+
+export const nsid = (v: string) => {
+  try {
+    // ... existing code ...
+  } catch (e) {
+    // ... existing code ...
   }
 }

@@ -68,11 +68,13 @@ export class RateLimiter implements RateLimiterI {
   ): Promise<RateLimiterStatus | RateLimitExceededError | null> {
     if (
       this.bypassSecret &&
-      ctx.req.header('x-ratelimit-bypass') === this.bypassSecret
+      ctx.c.req.header('x-ratelimit-bypass') === this.bypassSecret
     ) {
       return null
     }
-    const ip = ctx.req.ip
+    const ip =
+      ctx.c.req.header('x-forwarded-for')?.split(',')[0] ||
+      ctx.c.req.header('x-real-ip')
     if (this.bypassIps && ip && this.bypassIps.includes(ip)) {
       return null
     }
@@ -175,13 +177,13 @@ export const setResHeaders = (
   ctx: XRPCReqContext,
   status: RateLimiterStatus,
 ) => {
-  ctx.res.setHeader('RateLimit-Limit', status.limit)
-  ctx.res.setHeader('RateLimit-Remaining', status.remainingPoints)
-  ctx.res.setHeader(
+  ctx.c.header('RateLimit-Limit', status.limit.toString())
+  ctx.c.header('RateLimit-Remaining', status.remainingPoints.toString())
+  ctx.c.header(
     'RateLimit-Reset',
-    Math.floor((Date.now() + status.msBeforeNext) / 1000),
+    Math.floor((Date.now() + status.msBeforeNext) / 1000).toString(),
   )
-  ctx.res.setHeader('RateLimit-Policy', `${status.limit};w=${status.duration}`)
+  ctx.c.header('RateLimit-Policy', `${status.limit};w=${status.duration}`)
 }
 
 export const getTightestLimit = (
@@ -198,7 +200,12 @@ export const getTightestLimit = (
   return lowest
 }
 
-// when using a proxy, ensure headers are getting forwarded correctly: `app.set('trust proxy', true)`
-// https://expressjs.com/en/guide/behind-proxies.html
-const defaultKey: CalcKeyFn = (ctx: XRPCReqContext) => ctx.req.ip || null
+// when using a proxy, ensure x-forwarded-for or x-real-ip headers are set correctly
+const defaultKey: CalcKeyFn = (ctx: XRPCReqContext) => {
+  const forwarded = ctx.c.req.header('x-forwarded-for')?.split(',')[0]
+  if (forwarded) return forwarded
+  const realIp = ctx.c.req.header('x-real-ip')
+  if (realIp) return realIp
+  return ctx.req?.socket?.remoteAddress || null
+}
 const defaultPoints: CalcPointsFn = () => 1

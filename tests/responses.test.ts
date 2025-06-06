@@ -50,7 +50,12 @@ describe('Responses', () => {
 
   let client: XrpcClient
   beforeAll(async () => {
-    s = await createServer(server)
+    s = await createServer(server, (err) => {
+      if (err.message === 'error') {
+        return new Response(null, { status: 500 })
+      }
+      throw err
+    })
     const { port } = s.address() as AddressInfo
     client = new XrpcClient(`http://localhost:${port}`, LEXICONS)
   })

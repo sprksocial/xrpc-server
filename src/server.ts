@@ -1,17 +1,7 @@
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import express, {
-  Application,
-  ErrorRequestHandler,
-  Express,
-  NextFunction,
-  Request,
-  RequestHandler,
-  Response,
-  Router,
-  json as jsonParser,
-  text as textParser,
-} from 'express'
+import { Hono } from 'hono'
+import { HTTPException } from 'hono/http-exception'
 import { check, schema } from '@atproto/common'
 import {
   LexXrpcProcedure,
@@ -34,6 +24,7 @@ import {
   MethodNotImplementedError,
   Options,
   Params,
+  PayloadTooLargeError,
   RateLimitExceededError,
   RateLimiterI,
   XRPCError,
@@ -54,9 +45,10 @@ import {
   validateOutput,
 } from './util'
 import { WebSocket } from 'ws'
-import { Server as HttpServer } from 'http'
+import { Server as HttpServer, IncomingMessage } from 'http'
+import type { Context, Next, MiddlewareHandler } from 'hono'
 
-type RequestWithLocals = Request & {
+type RequestWithLocals = {
   _xrpcLocals?: RequestLocals
 }
 
@@ -67,12 +59,12 @@ export function createServer(lexicons?: LexiconDoc[], options?: Options) {
 }
 
 export class Server {
-  router: Express = express()
-  routes: Router = Router()
+  app: Hono = new Hono()
+  routes: Hono = new Hono()
   subscriptions = new Map<string, XrpcStreamServer>()
   lex = new Lexicons()
   options: Options
-  middleware: Record<'json' | 'text', RequestHandler>
+  middleware: Record<'json' | 'text', any>
   globalRateLimiters: RateLimiterI[]
   sharedRateLimiters: Record<string, RateLimiterI>
   routeRateLimiters: Record<string, RateLimiterI[]>
@@ -81,16 +73,15 @@ export class Server {
     if (lexicons) {
       this.addLexicons(lexicons)
     }
-    this.router.use(this.routes)
-    this.router.use('/xrpc/:methodId', this.catchall.bind(this))
-    this.router.use(createErrorMiddleware(opts))
-    this.router.once('mount', (app: Application) => {
-      this.enableStreamingOnListen(app)
-    })
+    this.app = new Hono()
+    this.routes = new Hono()
+    this.app.route('', this.routes)
+    this.app.all('/xrpc/:methodId', this.catchall.bind(this))
+    this.app.onError(createErrorMiddleware(opts))
     this.options = opts
     this.middleware = {
-      json: jsonParser({ limit: opts?.payload?.jsonLimit }),
-      text: textParser({ limit: opts?.payload?.textLimit }),
+      json: { limit: opts?.payload?.jsonLimit },
+      text: { limit: opts?.payload?.textLimit },
     }
     this.globalRateLimiters = []
     this.sharedRateLimiters = {}
@@ -176,30 +167,168 @@ export class Server {
     config: XRPCHandlerConfig,
   ) {
     const verb: 'post' | 'get' = def.type === 'procedure' ? 'post' : 'get'
-    const middleware: RequestHandler[] = []
+    const middleware: MiddlewareHandler[] = []
     middleware.push(createLocalsMiddleware(nsid))
     if (config.auth) {
       middleware.push(createAuthMiddleware(config.auth))
     }
-    if (verb === 'post') {
-      middleware.push(this.middleware.json)
-      middleware.push(this.middleware.text)
-    }
     this.setupRouteRateLimits(nsid, config)
-    this.routes[verb](
-      `/xrpc/${nsid}`,
-      ...middleware,
-      this.createHandler(nsid, def, config),
-    )
+    
+    const routeOpts = {
+      blobLimit: config.opts?.blobLimit ?? this.options.payload?.blobLimit,
+    }
+    
+    // Add body parsing middleware for POST requests
+    if (verb === 'post') {
+      this.routes.post(
+        `/xrpc/${nsid}`,
+        ...middleware,
+        async (c: Context, next: Next): Promise<Response | void> => {
+          try {
+            // Convert Headers to plain object
+            const headers: { [key: string]: string | string[] | undefined } = {}
+            c.req.raw.headers.forEach((value, key) => {
+              headers[key.toLowerCase()] = value
+            })
+
+            // Check if we need a body
+            const needsBody = def.type === 'procedure' && 'input' in def && def.input
+            if (needsBody && !headers['content-type']) {
+              throw new InvalidRequestError('Request encoding (Content-Type) required but not provided')
+            }
+
+            // Handle content encoding (compression)
+            const contentEncoding = headers['content-encoding']
+            let encodings: string[] = []
+            if (contentEncoding) {
+              if (Array.isArray(contentEncoding)) {
+                encodings = contentEncoding.flatMap(e => e.split(',').map(s => s.trim()))
+              } else {
+                encodings = contentEncoding.split(',').map(s => s.trim())
+              }
+              // Filter out 'identity' since it means no transformation
+              encodings = encodings.filter(e => e !== 'identity')
+              for (const encoding of encodings) {
+                if (!['gzip', 'deflate', 'br'].includes(encoding)) {
+                  throw new InvalidRequestError('unsupported content-encoding')
+                }
+              }
+            }
+
+            // Handle content length
+            const contentLength = headers['content-length']
+            if (contentLength) {
+              const length = Array.isArray(contentLength) ? parseInt(contentLength[0], 10) : parseInt(contentLength, 10)
+              if (isNaN(length)) {
+                throw new InvalidRequestError('invalid content-length')
+              }
+              if (routeOpts.blobLimit && length > routeOpts.blobLimit) {
+                throw new PayloadTooLargeError('request entity too large')
+              }
+            }
+
+            // Get the raw body
+            let body: unknown
+            const contentType = headers['content-type']
+            if (contentType) {
+              const type = Array.isArray(contentType) ? contentType[0] : contentType
+              if (type.includes('application/json')) {
+                body = await c.req.json()
+              } else if (type.includes('text/')) {
+                body = await c.req.text()
+              } else {
+                const buffer = Buffer.from(await c.req.arrayBuffer())
+                if (
+                  encodings.length === 0 &&
+                  routeOpts.blobLimit &&
+                  buffer.length > routeOpts.blobLimit
+                ) {
+                  throw new PayloadTooLargeError('request entity too large')
+                }
+                body = buffer
+              }
+            }
+
+            // Handle decompression if needed
+            if (encodings.length > 0 && body instanceof Buffer) {
+              const { createGunzip, createBrotliDecompress, createInflate } = await import('node:zlib')
+              const { pipeline } = await import('node:stream/promises')
+              const { Readable } = await import('node:stream')
+
+              let currentBody = body
+              let totalSize = 0
+              for (const encoding of encodings.reverse()) {
+                const source = Readable.from([currentBody])
+                let transform
+                switch (encoding) {
+                  case 'gzip':
+                    transform = createGunzip()
+                    break
+                  case 'deflate':
+                    transform = createInflate()
+                    break
+                  case 'br':
+                    transform = createBrotliDecompress()
+                    break
+                  default:
+                    throw new InvalidRequestError('unsupported content-encoding')
+                }
+
+                const chunks: Buffer[] = []
+                try {
+                  await pipeline(source, transform, async function*(source) {
+                    for await (const chunk of source) {
+                      const buffer = Buffer.from(chunk)
+                      totalSize += buffer.length
+                      if (routeOpts.blobLimit && totalSize > routeOpts.blobLimit) {
+                        throw new PayloadTooLargeError('request entity too large')
+                      }
+                      chunks.push(buffer)
+                    }
+                  })
+                  currentBody = Buffer.concat(chunks)
+                } catch (err) {
+                  if (err instanceof PayloadTooLargeError) {
+                    throw err
+                  }
+                  throw new InvalidRequestError('unable to read input')
+                }
+              }
+              body = currentBody
+            }
+
+            // Validate the input against the lexicon schema
+            const input = await validateInput(nsid, def, body, headers, routeOpts, this.lex)
+            c.set('validatedInput', input)
+            await next()
+          } catch (err) {
+            if (err instanceof XRPCError) {
+              throw err
+            }
+            if (err instanceof Error) {
+              throw new InvalidRequestError(err.message)
+            }
+            throw new InvalidRequestError('Invalid request body')
+          }
+        },
+        this.createHandler(nsid, def, config),
+      )
+    } else {
+      this.routes.get(
+        `/xrpc/${nsid}`,
+        ...middleware,
+        this.createHandler(nsid, def, config),
+      )
+    }
   }
 
-  async catchall(req: Request, res: Response, next: NextFunction) {
+  async catchall(c: Context, next: Next): Promise<Response | void> {
     if (this.globalRateLimiters) {
       try {
         const rlRes = await consumeMany(
           {
-            req,
-            res,
+            c,
+            req: c.env.incoming as IncomingMessage,
             auth: undefined,
             params: {},
             input: undefined,
@@ -210,48 +339,55 @@ export class Server {
           ),
         )
         if (rlRes instanceof RateLimitExceededError) {
-          return next(rlRes)
+          throw rlRes
         }
       } catch (err) {
-        return next(err)
+        throw err
       }
     }
 
     if (this.options.catchall) {
-      return this.options.catchall(req, res, next)
+      const result = await this.options.catchall(c, next)
+      if (result instanceof Response) {
+        return result
+      }
+      return
     }
 
-    const def = this.lex.getDef(req.params.methodId)
+    const methodId = c.req.param('methodId')
+    const def = this.lex.getDef(methodId)
     if (!def) {
-      return next(new MethodNotImplementedError())
+      throw new MethodNotImplementedError()
     }
     // validate method
-    if (def.type === 'query' && req.method !== 'GET') {
-      return next(
-        new InvalidRequestError(
-          `Incorrect HTTP method (${req.method}) expected GET`,
-        ),
+    if (def.type === 'query' && c.req.method !== 'GET') {
+      throw new InvalidRequestError(
+        `Incorrect HTTP method (${c.req.method}) expected GET`,
       )
-    } else if (def.type === 'procedure' && req.method !== 'POST') {
-      return next(
-        new InvalidRequestError(
-          `Incorrect HTTP method (${req.method}) expected POST`,
-        ),
+    } else if (def.type === 'procedure' && c.req.method !== 'POST') {
+      throw new InvalidRequestError(
+        `Incorrect HTTP method (${c.req.method}) expected POST`,
       )
     }
-    return next()
+    await next()
   }
 
   createHandler(
     nsid: string,
     def: LexXrpcQuery | LexXrpcProcedure,
     routeCfg: XRPCHandlerConfig,
-  ): RequestHandler {
+  ): MiddlewareHandler {
     const routeOpts = {
       blobLimit: routeCfg.opts?.blobLimit ?? this.options.payload?.blobLimit,
     }
-    const validateReqInput = (req: Request) =>
-      validateInput(nsid, def, req, routeOpts, this.lex)
+    const validateReqInput = async (c: Context) => {
+      const headers: { [key: string]: string | string[] | undefined } = {}
+      for (const [key, value] of Object.entries(c.req.raw.headers)) {
+        headers[key.toLowerCase()] = value
+      }
+      const { headers: _, body: __, ...rest } = c.req.raw
+      return c.get('validatedInput') || (await validateInput(nsid, def, undefined, headers, routeOpts, this.lex))
+    }
     const validateResOutput =
       this.options.validateResponse === false
         ? null
@@ -272,32 +408,32 @@ export class Server {
         rls.map((rl) => (ctx: XRPCReqContext) => rl.reset(ctx)),
       )
 
-    return async function (req, res, next) {
+    return async function (c: Context): Promise<Response> {
       try {
         // validate request
-        let params = decodeQueryParams(def, req.query)
+        let params = decodeQueryParams(def, c.req.queries())
         try {
           params = assertValidXrpcParams(params) as Params
         } catch (e) {
           throw new InvalidRequestError(String(e))
         }
-        const input = validateReqInput(req)
+        const input = await validateReqInput(c)
 
-        const locals: RequestLocals = (req as RequestWithLocals)._xrpcLocals!
+        const locals: RequestLocals = c.get(REQUEST_LOCALS_KEY)
 
         const reqCtx: XRPCReqContext = {
           params,
           input,
           auth: locals.auth,
-          req,
-          res,
+          c,
+          req: c.env.incoming as IncomingMessage,
           resetRouteRateLimits: async () => resetRateLimit(reqCtx),
         }
 
         // handle rate limits
         const result = await consumeRateLimit(reqCtx)
         if (result instanceof RateLimitExceededError) {
-          return next(result)
+          throw result
         }
 
         // run the handler
@@ -305,54 +441,67 @@ export class Server {
 
         if (!output) {
           validateResOutput?.(output)
-          res.status(200)
-          res.end()
+          return new Response(null, { status: 200 })
         } else if (isHandlerPipeThroughStream(output)) {
-          setHeaders(res, output)
-          res.status(200)
-          res.header('Content-Type', output.encoding)
-          await pipeline(output.stream, res)
+          const headers = new Headers()
+          setHeaders(headers, output)
+          headers.set('Content-Type', output.encoding)
+          return new Response(output.stream as any, { 
+            status: 200,
+            headers 
+          })
         } else if (isHandlerPipeThroughBuffer(output)) {
-          setHeaders(res, output)
-          res.status(200)
-          res.header('Content-Type', output.encoding)
-          res.end(output.buffer)
+          const headers = new Headers()
+          setHeaders(headers, output)
+          headers.set('Content-Type', output.encoding)
+          return new Response(output.buffer, {
+            status: 200,
+            headers
+          })
         } else if (isHandlerError(output)) {
-          next(XRPCError.fromError(output))
+          throw XRPCError.fromError(output)
         } else {
           validateResOutput?.(output)
-
-          res.status(200)
-          setHeaders(res, output)
+          const headers = new Headers()
+          setHeaders(headers, output)
 
           if (
             output.encoding === 'application/json' ||
             output.encoding === 'json'
           ) {
-            const json = lexToJson(output.body)
-            res.json(json)
+            headers.set('Content-Type', 'application/json; charset=utf-8')
+            return new Response(JSON.stringify(lexToJson(output.body)), {
+              status: 200,
+              headers,
+            })
           } else if (output.body instanceof Readable) {
-            res.header('Content-Type', output.encoding)
-            await pipeline(output.body, res)
+            headers.set('Content-Type', output.encoding)
+            return new Response(output.body as any, {
+              status: 200,
+              headers
+            })
           } else {
-            res.header('Content-Type', output.encoding)
-            res.send(
-              Buffer.isBuffer(output.body)
-                ? output.body
-                : output.body instanceof Uint8Array
-                  ? Buffer.from(output.body)
-                  : output.body,
-            )
+            let contentType = output.encoding
+            if (contentType.startsWith('text/')) {
+              contentType = `${contentType}; charset=utf-8`
+            }
+            headers.set('Content-Type', contentType)
+            const body = Buffer.isBuffer(output.body)
+              ? output.body
+              : output.body instanceof Uint8Array
+                ? Buffer.from(output.body)
+                : output.body
+            return new Response(body, {
+              status: 200,
+              headers
+            })
           }
         }
       } catch (err: unknown) {
-        // Express will not call the next middleware (errorMiddleware in this case)
-        // if the value passed to next is false-y (e.g. null, undefined, 0).
-        // Hence we replace it with an InternalServerError.
         if (!err) {
-          next(new InternalServerError())
+          throw new InternalServerError()
         } else {
-          next(err)
+          throw err
         }
       }
     }
@@ -422,24 +571,17 @@ export class Server {
     )
   }
 
-  private enableStreamingOnListen(app: Application) {
-    const _listen = app.listen
-    const serverInstance = this // capture the Server instance
-    app.listen = function(this: Application, ...args: Parameters<typeof _listen>) {
-      // @ts-ignore the args spread
-      const httpServer = _listen.call(this, ...args)
-      httpServer.on('upgrade', (req, socket, head) => {
-        const url = new URL(req.url || '', 'http://x')
-        const sub = url.pathname.startsWith('/xrpc/')
-          ? serverInstance.subscriptions.get(url.pathname.replace('/xrpc/', ''))
-          : undefined
-        if (!sub) return socket.destroy()
-        sub.wss.handleUpgrade(req, socket, head, (client: WebSocket) =>
-          sub.wss.emit('connection', client, req),
-        )
-      })
-      return httpServer
-    } as typeof _listen
+  public enableStreamingOnListen(httpServer: HttpServer) {
+    httpServer.on('upgrade', (req, socket, head) => {
+      const url = new URL(req.url || '', 'http://x')
+      const sub = url.pathname.startsWith('/xrpc/')
+        ? this.subscriptions.get(url.pathname.replace('/xrpc/', ''))
+        : undefined
+      if (!sub) return socket.destroy()
+      sub.wss.handleUpgrade(req, socket, head, (client: WebSocket) =>
+        sub.wss.emit('connection', client, req),
+      )
+    })
   }
 
   private setupRouteRateLimits(nsid: string, config: XRPCHandlerConfig) {
@@ -504,22 +646,22 @@ export class Server {
 }
 
 function setHeaders(
-  res: Response,
+  headers: Headers,
   result: HandlerSuccess | HandlerPipeThrough,
 ) {
-  const { headers } = result
-  if (headers) {
-    for (const [name, val] of Object.entries(headers)) {
-      if (val != null) res.header(name, val)
+  const resultHeaders = result.headers
+  if (resultHeaders) {
+    for (const [name, val] of Object.entries(resultHeaders)) {
+      if (val != null) headers.set(name, val)
     }
   }
 }
 
-function createLocalsMiddleware(nsid: string): RequestHandler {
-  return function (req, _res, next) {
+function createLocalsMiddleware(nsid: string): MiddlewareHandler {
+  return async function (c: Context, next: Next): Promise<Response | void> {
     const locals: RequestLocals = { auth: undefined, nsid }
-    ;(req as RequestWithLocals)._xrpcLocals = locals
-    return next()
+    c.set(REQUEST_LOCALS_KEY, locals)
+    await next()
   }
 }
 
@@ -528,54 +670,45 @@ type RequestLocals = {
   nsid: string
 }
 
-function createAuthMiddleware(verifier: AuthVerifier): RequestHandler {
-  return async function (req, res, next) {
+function createAuthMiddleware(verifier: AuthVerifier): MiddlewareHandler {
+  return async function (c: Context, next: Next): Promise<Response | void> {
     try {
-      const result = await verifier({ req, res })
+      const result = await verifier({ c })
       if (isHandlerError(result)) {
         throw XRPCError.fromHandlerError(result)
       }
-      const locals: RequestLocals = (req as RequestWithLocals)._xrpcLocals!
+      const locals: RequestLocals = c.get(REQUEST_LOCALS_KEY)
       locals.auth = result
-      next()
+      await next()
     } catch (err: unknown) {
-      next(err)
+      throw err
     }
   }
 }
 
 function createErrorMiddleware({
   errorParser = (err) => XRPCError.fromError(err),
-}: Options): ErrorRequestHandler {
-  return (err, req, res, next) => {
-    const locals: RequestLocals | undefined = (req as RequestWithLocals)._xrpcLocals
+}: Options) {
+  return (err: Error, c: Context) => {
+    const locals: RequestLocals | undefined = c.get(REQUEST_LOCALS_KEY)
     const methodSuffix = locals ? ` method ${locals.nsid}` : ''
 
     const xrpcError = errorParser(err)
 
-    // Use the request's logger (if available) to benefit from request context
-    // (id, timing) and logging configuration (serialization, etc.).
-    const logger = isPinoHttpRequest(req) ? req.log : log
+    const logger = isPinoHttpRequest(c.req.raw) ? c.req.raw.log : log
 
     const isInternalError = xrpcError instanceof InternalServerError
 
     logger.error(
       {
-        // @NOTE Computation of error stack is an expensive operation, so
-        // we strip it for expected errors.
         err:
           isInternalError || process.env.NODE_ENV === 'development'
             ? err
             : toSimplifiedErrorLike(err),
-
-        // XRPC specific properties, for easier browsing of logs
         nsid: locals?.nsid,
         type: xrpcError.type,
         status: xrpcError.statusCode,
         payload: xrpcError.payload,
-
-        // Ensure that the logged item's name is set to LOGGER_NAME, instead of
-        // the name of the pino-http logger, to ensure consistency across logs.
         name: LOGGER_NAME,
       },
       isInternalError
@@ -583,18 +716,18 @@ function createErrorMiddleware({
         : `error in xrpc${methodSuffix}`,
     )
 
-    if (res.headersSent) {
-      return next(err)
-    }
-
-    return res.status(xrpcError.statusCode).json(xrpcError.payload)
+    const headers = new Headers({
+      'Content-Type': 'application/json; charset=utf-8',
+    })
+    return new Response(JSON.stringify(xrpcError.payload), {
+      status: xrpcError.statusCode,
+      headers,
+    })
   }
 }
 
-function isPinoHttpRequest(req: Request): req is Request & {
-  log: { error: (obj: unknown, msg: string) => void }
-} {
-  return typeof (req as { log?: any }).log?.error === 'function'
+function isPinoHttpRequest(req: any): req is { log: { error: (obj: unknown, msg: string) => void } } {
+  return typeof req?.log?.error === 'function'
 }
 
 function toSimplifiedErrorLike(err: unknown): unknown {

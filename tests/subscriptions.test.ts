@@ -10,6 +10,7 @@ import {
   basicAuthHeaders,
   closeServer,
   createBasicAuth,
+  createStreamBasicAuth,
   createServer,
 } from './_util'
 
@@ -109,7 +110,7 @@ describe('Subscriptions', () => {
   })
 
   server.streamMethod('io.example.streamAuth', {
-    auth: createBasicAuth({ username: 'admin', password: 'password' }),
+    auth: createStreamBasicAuth({ username: 'admin', password: 'password' }),
     handler: async function* ({ auth }) {
       yield auth
     },

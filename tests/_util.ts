@@ -1,15 +1,25 @@
 import { once } from 'node:events'
 import * as http from 'node:http'
-import express from 'express'
 import * as xrpc from '../src'
 import { AuthRequiredError } from '../src'
+import { serve } from '@hono/node-server'
+import { Context } from 'hono'
 
-export async function createServer({
-  router,
-}: xrpc.Server): Promise<http.Server> {
-  const app = express()
-  app.use(router)
-  const httpServer = app.listen(0)
+export async function createServer(
+  server: xrpc.Server,
+  onError?: (err: Error, c: Context) => Response | void,
+): Promise<http.Server> {
+  const httpServer = serve({
+    fetch: server.app.fetch,
+    port: 0,
+  }) as http.Server
+
+  server.enableStreamingOnListen(httpServer)
+
+  // Add XRPC routes to the server
+  server.app.route('', server.routes)
+  server.app.all('/xrpc/:methodId', server.catchall.bind(server))
+
   await once(httpServer, 'listening')
   return httpServer
 }
@@ -24,9 +34,8 @@ export function createBasicAuth(allowed: {
   username: string
   password: string
 }) {
-  return function (ctx: { req: http.IncomingMessage }) {
-    const header = ctx.req.headers.authorization ?? ''
-    if (!header.startsWith('Basic ')) {
+  const verifyAuth = (header?: string) => {
+    if (!header || !header.startsWith('Basic ')) {
       throw new AuthRequiredError()
     }
     const original = header.replace('Basic ', '')
@@ -40,6 +49,36 @@ export function createBasicAuth(allowed: {
       credentials: { username },
       artifacts: { original },
     }
+  }
+
+  return function (ctx: { c: { req: { header: (name: string) => string | undefined } } }) {
+    return verifyAuth(ctx.c.req.header('authorization'))
+  }
+}
+
+export function createStreamBasicAuth(allowed: {
+  username: string
+  password: string
+}) {
+  const verifyAuth = (header?: string) => {
+    if (!header || !header.startsWith('Basic ')) {
+      throw new AuthRequiredError()
+    }
+    const original = header.replace('Basic ', '')
+    const [username, password] = Buffer.from(original, 'base64')
+      .toString()
+      .split(':')
+    if (username !== allowed.username || password !== allowed.password) {
+      throw new AuthRequiredError()
+    }
+    return {
+      credentials: { username },
+      artifacts: { original },
+    }
+  }
+
+  return function (ctx: { req: { headers: { authorization?: string } } }) {
+    return verifyAuth(ctx.req.headers.authorization)
   }
 }
 
