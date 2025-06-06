@@ -1,7 +1,6 @@
 import assert from 'node:assert'
 import { IncomingMessage } from 'node:http'
 import { Duplex, Readable, pipeline } from 'node:stream'
-import express from 'express'
 import mime from 'mime-types'
 import { MaxSizeChecker, createDecoders } from '@atproto/common'
 import {
@@ -244,14 +243,6 @@ function getBodyPresence(
   return 'present'
 }
 
-export function processBodyAsBytes(req: express.Request): Promise<Uint8Array> {
-  return new Promise((resolve) => {
-    const chunks: Buffer[] = []
-    req.on('data', (chunk) => chunks.push(chunk))
-    req.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))))
-  })
-}
-
 function decodeBodyStream(
   req: RequestLike,
   maxSize: number | undefined,
@@ -348,8 +339,8 @@ export interface ServerTiming {
   description?: string
 }
 
-export const parseReqNsid = (req: express.Request | IncomingMessage) =>
-  parseUrlNsid('originalUrl' in req ? req.originalUrl : req.url || '/')
+export const parseReqNsid = (req: IncomingMessage & { originalUrl?: string }) =>
+  parseUrlNsid(req.originalUrl || (req.url || '/'))
 
 /**
  * Validates and extracts the nsid from an xrpc path
