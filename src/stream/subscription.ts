@@ -1,30 +1,30 @@
-import { ClientOptions } from 'ws'
-import { ensureChunkIsMessage } from './stream.ts'
-import { WebSocketKeepAlive } from './websocket-keepalive.ts'
+import { ClientOptions } from "ws";
+import { ensureChunkIsMessage } from "./stream.ts";
+import { WebSocketKeepAlive } from "./websocket-keepalive.ts";
 
 interface MessageBody {
-  $type?: string
-  [key: string]: unknown
+  $type?: string;
+  [key: string]: unknown;
 }
 
 export class Subscription<T = unknown> {
   constructor(
     public opts: ClientOptions & {
-      service: string
-      method: string
-      maxReconnectSeconds?: number
-      heartbeatIntervalMs?: number
-      signal?: AbortSignal
-      validate: (obj: unknown) => T | undefined
+      service: string;
+      method: string;
+      maxReconnectSeconds?: number;
+      heartbeatIntervalMs?: number;
+      signal?: AbortSignal;
+      validate: (obj: unknown) => T | undefined;
       onReconnectError?: (
         error: unknown,
         n: number,
         initialSetup: boolean,
-      ) => void
+      ) => void;
       getParams?: () =>
         | Record<string, unknown>
         | Promise<Record<string, unknown> | undefined>
-        | undefined
+        | undefined;
     },
   ) {}
 
@@ -32,63 +32,65 @@ export class Subscription<T = unknown> {
     const ws = new WebSocketKeepAlive({
       ...this.opts,
       getUrl: async () => {
-        const params = (await this.opts.getParams?.()) ?? {}
-        const query = encodeQueryParams(params)
-        return `${this.opts.service}/xrpc/${this.opts.method}?${query}`
+        const params = (await this.opts.getParams?.()) ?? {};
+        const query = encodeQueryParams(params);
+        return `${this.opts.service}/xrpc/${this.opts.method}?${query}`;
       },
-    })
+    });
     for await (const chunk of ws) {
-      const message = await ensureChunkIsMessage(chunk)
-      const t = message.header.t
-      const clone = message.body !== undefined ? { ...message.body } as MessageBody : undefined
+      const message = await ensureChunkIsMessage(chunk);
+      const t = message.header.t;
+      const clone = message.body !== undefined
+        ? { ...message.body } as MessageBody
+        : undefined;
       if (clone !== undefined && t !== undefined) {
-        clone.$type = t.startsWith('#') ? this.opts.method + t : t
+        clone.$type = t.startsWith("#") ? this.opts.method + t : t;
       }
-      const result = this.opts.validate(clone)
+      const result = this.opts.validate(clone);
       if (result !== undefined) {
-        yield result
+        yield result;
       }
     }
   }
 }
 
-export default Subscription
+export default Subscription;
 
 function encodeQueryParams(obj: Record<string, unknown>): string {
-  const params = new URLSearchParams()
+  const params = new URLSearchParams();
   Object.entries(obj).forEach(([key, value]) => {
-    const encoded = encodeQueryParam(value)
+    const encoded = encodeQueryParam(value);
     if (Array.isArray(encoded)) {
-      encoded.forEach((enc) => params.append(key, enc))
+      encoded.forEach((enc) => params.append(key, enc));
     } else {
-      params.set(key, encoded)
+      params.set(key, encoded);
     }
-  })
-  return params.toString()
+  });
+  return params.toString();
 }
 
 // Adapted from xrpc, but without any lex-specific knowledge
 function encodeQueryParam(value: unknown): string | string[] {
-  if (typeof value === 'string') {
-    return value
+  if (typeof value === "string") {
+    return value;
   }
-  if (typeof value === 'number') {
-    return value.toString()
+  if (typeof value === "number") {
+    return value.toString();
   }
-  if (typeof value === 'boolean') {
-    return value ? 'true' : 'false'
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
   }
-  if (typeof value === 'undefined') {
-    return ''
+  if (typeof value === "undefined") {
+    return "";
   }
-  if (typeof value === 'object') {
+  if (typeof value === "object") {
     if (value instanceof Date) {
-      return value.toISOString()
+      return value.toISOString();
     } else if (Array.isArray(value)) {
-      return value.flatMap(encodeQueryParam)
+      return value.flatMap(encodeQueryParam);
     } else if (!value) {
-      return ''
+      return "";
     }
   }
-  throw new Error(`Cannot encode ${typeof value}s into query params`)
+  throw new Error(`Cannot encode ${typeof value}s into query params`);
 }

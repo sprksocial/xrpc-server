@@ -3,44 +3,44 @@ import {
   RateLimiterMemory,
   RateLimiterRedis,
   RateLimiterRes,
-} from 'rate-limiter-flexible'
-import { logger } from './logger.ts'
+} from "rate-limiter-flexible";
+import { logger } from "./logger.ts";
 import {
   CalcKeyFn,
   CalcPointsFn,
-  RateLimitExceededError,
   RateLimiterConsume,
   RateLimiterI,
   RateLimiterReset,
   RateLimiterStatus,
+  RateLimitExceededError,
   XRPCReqContext,
-} from './types.ts'
+} from "./types.ts";
 
 export type RateLimiterOpts = {
-  keyPrefix: string
-  durationMs: number
-  points: number
-  bypassSecret?: string
-  bypassIps?: string[]
-  calcKey?: CalcKeyFn
-  calcPoints?: CalcPointsFn
-  failClosed?: boolean
-}
+  keyPrefix: string;
+  durationMs: number;
+  points: number;
+  bypassSecret?: string;
+  bypassIps?: string[];
+  calcKey?: CalcKeyFn;
+  calcPoints?: CalcPointsFn;
+  failClosed?: boolean;
+};
 
 export class RateLimiter implements RateLimiterI {
-  public limiter: RateLimiterAbstract
-  private bypassSecret?: string
-  private bypassIps?: string[]
-  private failClosed?: boolean
-  public calcKey: CalcKeyFn
-  public calcPoints: CalcPointsFn
+  public limiter: RateLimiterAbstract;
+  private bypassSecret?: string;
+  private bypassIps?: string[];
+  private failClosed?: boolean;
+  public calcKey: CalcKeyFn;
+  public calcPoints: CalcPointsFn;
 
   constructor(limiter: RateLimiterAbstract, opts: RateLimiterOpts) {
-    this.limiter = limiter
-    this.bypassSecret = opts.bypassSecret
-    this.bypassIps = opts.bypassIps
-    this.calcKey = opts.calcKey ?? defaultKey
-    this.calcPoints = opts.calcPoints ?? defaultPoints
+    this.limiter = limiter;
+    this.bypassSecret = opts.bypassSecret;
+    this.bypassIps = opts.bypassIps;
+    this.calcKey = opts.calcKey ?? defaultKey;
+    this.calcPoints = opts.calcPoints ?? defaultPoints;
   }
 
   static memory(opts: RateLimiterOpts): RateLimiter {
@@ -48,8 +48,8 @@ export class RateLimiter implements RateLimiterI {
       keyPrefix: opts.keyPrefix,
       duration: Math.floor(opts.durationMs / 1000),
       points: opts.points,
-    })
-    return new RateLimiter(limiter, opts)
+    });
+    return new RateLimiter(limiter, opts);
   }
 
   static redis(storeClient: unknown, opts: RateLimiterOpts): RateLimiter {
@@ -58,8 +58,8 @@ export class RateLimiter implements RateLimiterI {
       keyPrefix: opts.keyPrefix,
       duration: Math.floor(opts.durationMs / 1000),
       points: opts.points,
-    })
-    return new RateLimiter(limiter, opts)
+    });
+    return new RateLimiter(limiter, opts);
   }
 
   async consume(
@@ -68,37 +68,36 @@ export class RateLimiter implements RateLimiterI {
   ): Promise<RateLimiterStatus | RateLimitExceededError | null> {
     if (
       this.bypassSecret &&
-      ctx.c.req.header('x-ratelimit-bypass') === this.bypassSecret
+      ctx.c.req.header("x-ratelimit-bypass") === this.bypassSecret
     ) {
-      return null
+      return null;
     }
-    const ip =
-      ctx.c.req.header('x-forwarded-for')?.split(',')[0] ||
-      ctx.c.req.header('x-real-ip')
+    const ip = ctx.c.req.header("x-forwarded-for")?.split(",")[0] ||
+      ctx.c.req.header("x-real-ip");
     if (this.bypassIps && ip && this.bypassIps.includes(ip)) {
-      return null
+      return null;
     }
-    const key = opts?.calcKey ? opts.calcKey(ctx) : this.calcKey(ctx)
+    const key = opts?.calcKey ? opts.calcKey(ctx) : this.calcKey(ctx);
     if (key === null) {
-      return null
+      return null;
     }
     const points = opts?.calcPoints
       ? opts.calcPoints(ctx)
-      : this.calcPoints(ctx)
+      : this.calcPoints(ctx);
     if (points < 1) {
-      return null
+      return null;
     }
     try {
-      const res = await this.limiter.consume(key, points)
-      return formatLimiterStatus(this.limiter, res)
+      const res = await this.limiter.consume(key, points);
+      return formatLimiterStatus(this.limiter, res);
     } catch (err) {
       // yes this library rejects with a res not an error
       if (err instanceof RateLimiterRes) {
-        const status = formatLimiterStatus(this.limiter, err)
-        return new RateLimitExceededError(status)
+        const status = formatLimiterStatus(this.limiter, err);
+        return new RateLimitExceededError(status);
       } else {
         if (this.failClosed) {
-          throw err
+          throw err;
         }
         logger.error(
           {
@@ -107,9 +106,9 @@ export class RateLimiter implements RateLimiterI {
             points: this.limiter.points,
             duration: this.limiter.duration,
           },
-          'rate limiter failed to consume points',
-        )
-        return null
+          "rate limiter failed to consume points",
+        );
+        return null;
       }
     }
   }
@@ -118,17 +117,19 @@ export class RateLimiter implements RateLimiterI {
     ctx: XRPCReqContext,
     opts?: { calcKey?: CalcKeyFn },
   ): Promise<void> {
-    const key = opts?.calcKey ? opts.calcKey(ctx) : this.calcKey(ctx)
+    const key = opts?.calcKey ? opts.calcKey(ctx) : this.calcKey(ctx);
     if (key === null) {
-      return
+      return;
     }
 
     try {
-      await this.limiter.delete(key)
+      await this.limiter.delete(key);
     } catch (cause) {
-      const error = new Error(`rate limiter failed to reset key: ${key}`) as Error & { cause: unknown }
-      error.cause = cause
-      throw error
+      const error = new Error(`rate limiter failed to reset key: ${key}`) as
+        & Error
+        & { cause: unknown };
+      error.cause = cause;
+      throw error;
     }
   }
 }
@@ -144,68 +145,68 @@ export const formatLimiterStatus = (
     msBeforeNext: res.msBeforeNext,
     consumedPoints: res.consumedPoints,
     isFirstInDuration: res.isFirstInDuration,
-  }
-}
+  };
+};
 
 export const consumeMany = async (
   ctx: XRPCReqContext,
   fns: RateLimiterConsume[],
 ): Promise<RateLimiterStatus | RateLimitExceededError | null> => {
-  if (fns.length === 0) return null
-  const results = await Promise.all(fns.map((fn) => fn(ctx)))
-  const tightestLimit = getTightestLimit(results)
+  if (fns.length === 0) return null;
+  const results = await Promise.all(fns.map((fn) => fn(ctx)));
+  const tightestLimit = getTightestLimit(results);
   if (tightestLimit === null) {
-    return null
+    return null;
   } else if (tightestLimit instanceof RateLimitExceededError) {
-    setResHeaders(ctx, tightestLimit.status)
-    return tightestLimit
+    setResHeaders(ctx, tightestLimit.status);
+    return tightestLimit;
   } else {
-    setResHeaders(ctx, tightestLimit)
-    return tightestLimit
+    setResHeaders(ctx, tightestLimit);
+    return tightestLimit;
   }
-}
+};
 
 export const resetMany = async (
   ctx: XRPCReqContext,
   fns: RateLimiterReset[],
 ): Promise<void> => {
-  if (fns.length === 0) return
-  await Promise.all(fns.map((fn) => fn(ctx)))
-}
+  if (fns.length === 0) return;
+  await Promise.all(fns.map((fn) => fn(ctx)));
+};
 
 export const setResHeaders = (
   ctx: XRPCReqContext,
   status: RateLimiterStatus,
 ) => {
-  ctx.c.header('RateLimit-Limit', status.limit.toString())
-  ctx.c.header('RateLimit-Remaining', status.remainingPoints.toString())
+  ctx.c.header("RateLimit-Limit", status.limit.toString());
+  ctx.c.header("RateLimit-Remaining", status.remainingPoints.toString());
   ctx.c.header(
-    'RateLimit-Reset',
+    "RateLimit-Reset",
     Math.floor((Date.now() + status.msBeforeNext) / 1000).toString(),
-  )
-  ctx.c.header('RateLimit-Policy', `${status.limit};w=${status.duration}`)
-}
+  );
+  ctx.c.header("RateLimit-Policy", `${status.limit};w=${status.duration}`);
+};
 
 export const getTightestLimit = (
   resps: (RateLimiterStatus | RateLimitExceededError | null)[],
 ): RateLimiterStatus | RateLimitExceededError | null => {
-  let lowest: RateLimiterStatus | null = null
+  let lowest: RateLimiterStatus | null = null;
   for (const resp of resps) {
-    if (resp === null) continue
-    if (resp instanceof RateLimitExceededError) return resp
+    if (resp === null) continue;
+    if (resp instanceof RateLimitExceededError) return resp;
     if (lowest === null || resp.remainingPoints < lowest.remainingPoints) {
-      lowest = resp
+      lowest = resp;
     }
   }
-  return lowest
-}
+  return lowest;
+};
 
 // when using a proxy, ensure x-forwarded-for or x-real-ip headers are set correctly
 const defaultKey: CalcKeyFn = (ctx: XRPCReqContext) => {
-  const forwarded = ctx.c.req.header('x-forwarded-for')?.split(',')[0]
-  if (forwarded) return forwarded
-  const realIp = ctx.c.req.header('x-real-ip')
-  if (realIp) return realIp
-  return ctx.req?.socket?.remoteAddress || null
-}
-const defaultPoints: CalcPointsFn = () => 1
+  const forwarded = ctx.c.req.header("x-forwarded-for")?.split(",")[0];
+  if (forwarded) return forwarded;
+  const realIp = ctx.c.req.header("x-real-ip");
+  if (realIp) return realIp;
+  return ctx.req?.socket?.remoteAddress || null;
+};
+const defaultPoints: CalcPointsFn = () => 1;

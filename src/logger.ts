@@ -1,8 +1,9 @@
-import { subsystemLogger } from '@atproto/common'
+import { subsystemLogger } from "@atproto/common";
 
-export const LOGGER_NAME = 'xrpc-server'
+export const LOGGER_NAME = "xrpc-server";
 
-export const logger: ReturnType<typeof subsystemLogger> =
-  subsystemLogger(LOGGER_NAME)
+export const logger: ReturnType<typeof subsystemLogger> = subsystemLogger(
+  LOGGER_NAME,
+);
 
-export default logger
+export default logger;

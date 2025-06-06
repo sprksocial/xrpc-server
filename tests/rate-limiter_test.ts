@@ -1,132 +1,132 @@
-import { AddressInfo } from 'node:net'
-import { MINUTE } from '@atproto/common'
-import { LexiconDoc } from '@atproto/lexicon'
-import { XrpcClient } from '@atproto/xrpc'
-import * as xrpcServer from '../mod.ts'
-import { RateLimiter } from '../mod.ts'
-import { closeServer, createServer } from './_util.ts'
-import { assertRejects } from "jsr:@std/assert"
+import { AddressInfo } from "node:net";
+import { MINUTE } from "@atproto/common";
+import { LexiconDoc } from "@atproto/lexicon";
+import { XrpcClient } from "@atproto/xrpc";
+import * as xrpcServer from "../mod.ts";
+import { RateLimiter } from "../mod.ts";
+import { closeServer, createServer } from "./_util.ts";
+import { assertRejects } from "jsr:@std/assert";
 
 const LEXICONS: LexiconDoc[] = [
   {
     lexicon: 1,
-    id: 'io.example.routeLimit',
+    id: "io.example.routeLimit",
     defs: {
       main: {
-        type: 'query',
+        type: "query",
         parameters: {
-          type: 'params',
-          required: ['str'],
+          type: "params",
+          required: ["str"],
           properties: {
-            str: { type: 'string' },
+            str: { type: "string" },
           },
         },
         output: {
-          encoding: 'application/json',
+          encoding: "application/json",
         },
       },
     },
   },
   {
     lexicon: 1,
-    id: 'io.example.routeLimitReset',
+    id: "io.example.routeLimitReset",
     defs: {
       main: {
-        type: 'query',
+        type: "query",
         parameters: {
-          type: 'params',
-          required: ['count'],
+          type: "params",
+          required: ["count"],
           properties: {
-            count: { type: 'integer' },
+            count: { type: "integer" },
           },
         },
         output: {
-          encoding: 'application/json',
+          encoding: "application/json",
         },
       },
     },
   },
   {
     lexicon: 1,
-    id: 'io.example.sharedLimitOne',
+    id: "io.example.sharedLimitOne",
     defs: {
       main: {
-        type: 'query',
+        type: "query",
         parameters: {
-          type: 'params',
-          required: ['points'],
+          type: "params",
+          required: ["points"],
           properties: {
-            points: { type: 'integer' },
+            points: { type: "integer" },
           },
         },
         output: {
-          encoding: 'application/json',
+          encoding: "application/json",
         },
       },
     },
   },
   {
     lexicon: 1,
-    id: 'io.example.sharedLimitTwo',
+    id: "io.example.sharedLimitTwo",
     defs: {
       main: {
-        type: 'query',
+        type: "query",
         parameters: {
-          type: 'params',
-          required: ['points'],
+          type: "params",
+          required: ["points"],
           properties: {
-            points: { type: 'integer' },
+            points: { type: "integer" },
           },
         },
         output: {
-          encoding: 'application/json',
+          encoding: "application/json",
         },
       },
     },
   },
   {
     lexicon: 1,
-    id: 'io.example.toggleLimit',
+    id: "io.example.toggleLimit",
     defs: {
       main: {
-        type: 'query',
+        type: "query",
         parameters: {
-          type: 'params',
+          type: "params",
           properties: {
-            shouldCount: { type: 'boolean' },
+            shouldCount: { type: "boolean" },
           },
         },
         output: {
-          encoding: 'application/json',
+          encoding: "application/json",
         },
       },
     },
   },
   {
     lexicon: 1,
-    id: 'io.example.noLimit',
+    id: "io.example.noLimit",
     defs: {
       main: {
-        type: 'query',
+        type: "query",
         output: {
-          encoding: 'application/json',
+          encoding: "application/json",
         },
       },
     },
   },
   {
     lexicon: 1,
-    id: 'io.example.nonExistent',
+    id: "io.example.nonExistent",
     defs: {
       main: {
-        type: 'query',
+        type: "query",
         output: {
-          encoding: 'application/json',
+          encoding: "application/json",
         },
       },
     },
   },
-]
+];
 
 Deno.test({
   name: "Rate Limiter Tests",
@@ -136,83 +136,88 @@ Deno.test({
       rateLimits: {
         creator: (opts: xrpcServer.RateLimiterOpts) =>
           RateLimiter.memory({
-            bypassSecret: 'bypass',
+            bypassSecret: "bypass",
             ...opts,
           }),
         shared: [
           {
-            name: 'shared-limit',
+            name: "shared-limit",
             durationMs: 5 * MINUTE,
             points: 6,
           },
         ],
         global: [
           {
-            name: 'global-ip',
+            name: "global-ip",
             durationMs: 5 * MINUTE,
             points: 100,
           },
         ],
       },
-    })
+    });
 
-    server.method('io.example.routeLimit', {
+    server.method("io.example.routeLimit", {
       rateLimit: {
         durationMs: 5 * MINUTE,
         points: 5,
-        calcKey: ({ params }: { params: xrpcServer.Params }) => params.str as string,
+        calcKey: ({ params }: { params: xrpcServer.Params }) =>
+          params.str as string,
       },
       handler: (ctx: { params: xrpcServer.Params }) => ({
-        encoding: 'json',
+        encoding: "json",
         body: ctx.params,
       }),
-    })
+    });
 
-    server.method('io.example.routeLimitReset', {
+    server.method("io.example.routeLimitReset", {
       rateLimit: {
         durationMs: 5 * MINUTE,
         points: 2,
       },
       handler: (ctx: xrpcServer.XRPCReqContext) => {
         if (ctx.params.count === 1) {
-          ctx.resetRouteRateLimits()
+          ctx.resetRouteRateLimits();
         }
 
         return {
-          encoding: 'json',
+          encoding: "json",
           body: {},
-        }
+        };
       },
-    })
+    });
 
-    server.method('io.example.sharedLimitOne', {
+    server.method("io.example.sharedLimitOne", {
       rateLimit: {
-        name: 'shared-limit',
-        calcPoints: ({ params }: { params: xrpcServer.Params }) => params.points as number,
+        name: "shared-limit",
+        calcPoints: ({ params }: { params: xrpcServer.Params }) =>
+          params.points as number,
       },
       handler: (ctx: { params: xrpcServer.Params }) => ({
-        encoding: 'json',
+        encoding: "json",
         body: ctx.params,
       }),
-    })
+    });
 
-    server.method('io.example.sharedLimitTwo', {
+    server.method("io.example.sharedLimitTwo", {
       rateLimit: {
-        name: 'shared-limit',
-        calcPoints: ({ params }: { params: xrpcServer.Params }) => params.points as number,
+        name: "shared-limit",
+        calcPoints: ({ params }: { params: xrpcServer.Params }) =>
+          params.points as number,
       },
       handler: (ctx: { params: xrpcServer.Params }) => ({
-        encoding: 'json',
+        encoding: "json",
         body: ctx.params,
       }),
-    })
+    });
 
-    server.method('io.example.toggleLimit', {
+    server.method("io.example.toggleLimit", {
       rateLimit: [
         {
           durationMs: 5 * MINUTE,
           points: 5,
-          calcPoints: ({ params }: { params: xrpcServer.Params }) => (params.shouldCount ? 1 : 0),
+          calcPoints: (
+            { params }: { params: xrpcServer.Params },
+          ) => (params.shouldCount ? 1 : 0),
         },
         {
           durationMs: 5 * MINUTE,
@@ -220,35 +225,36 @@ Deno.test({
         },
       ],
       handler: (ctx: { params: xrpcServer.Params }) => ({
-        encoding: 'json',
+        encoding: "json",
         body: ctx.params,
       }),
-    })
+    });
 
-    server.method('io.example.noLimit', {
+    server.method("io.example.noLimit", {
       handler: () => ({
-        encoding: 'json',
+        encoding: "json",
         body: {},
       }),
-    })
+    });
 
     // Create server and client
-    const s = await createServer(server)
-    const { port } = s.address() as AddressInfo
-    const client = new XrpcClient(`http://localhost:${port}`, LEXICONS)
+    const s = await createServer(server);
+    const { port } = s.address() as AddressInfo;
+    const client = new XrpcClient(`http://localhost:${port}`, LEXICONS);
 
     try {
       await Deno.test("rate limits a given route", async () => {
-        const makeCall = () => client.call('io.example.routeLimit', { str: 'test' })
+        const makeCall = () =>
+          client.call("io.example.routeLimit", { str: "test" });
         for (let i = 0; i < 5; i++) {
-          await makeCall()
+          await makeCall();
         }
         await assertRejects(
           () => makeCall(),
           Error,
-          'Rate Limit Exceeded'
-        )
-      })
+          "Rate Limit Exceeded",
+        );
+      });
 
       await Deno.test("can reset route rate limits", async () => {
         // Limit is 2.
@@ -257,94 +263,94 @@ Deno.test({
         // Call 2 is OK (1/2).
         // Call 3 is OK (2/2).
         for (let i = 0; i < 4; i++) {
-          await client.call('io.example.routeLimitReset', { count: i })
+          await client.call("io.example.routeLimitReset", { count: i });
         }
 
         // Call 4 exceeds the limit (3/2).
         await assertRejects(
-          () => client.call('io.example.routeLimitReset', { count: 4 }),
+          () => client.call("io.example.routeLimitReset", { count: 4 }),
           Error,
-          'Rate Limit Exceeded'
-        )
-      })
+          "Rate Limit Exceeded",
+        );
+      });
 
       await Deno.test("rate limits on a shared route", async () => {
-        await client.call('io.example.sharedLimitOne', { points: 1 })
-        await client.call('io.example.sharedLimitTwo', { points: 1 })
-        await client.call('io.example.sharedLimitOne', { points: 2 })
-        await client.call('io.example.sharedLimitTwo', { points: 2 })
+        await client.call("io.example.sharedLimitOne", { points: 1 });
+        await client.call("io.example.sharedLimitTwo", { points: 1 });
+        await client.call("io.example.sharedLimitOne", { points: 2 });
+        await client.call("io.example.sharedLimitTwo", { points: 2 });
         await assertRejects(
-          () => client.call('io.example.sharedLimitOne', { points: 1 }),
+          () => client.call("io.example.sharedLimitOne", { points: 1 }),
           Error,
-          'Rate Limit Exceeded'
-        )
+          "Rate Limit Exceeded",
+        );
         await assertRejects(
-          () => client.call('io.example.sharedLimitTwo', { points: 1 }),
+          () => client.call("io.example.sharedLimitTwo", { points: 1 }),
           Error,
-          'Rate Limit Exceeded'
-        )
-      })
+          "Rate Limit Exceeded",
+        );
+      });
 
       await Deno.test("applies multiple rate-limits", async () => {
         const makeCall = (shouldCount: boolean) =>
-          client.call('io.example.toggleLimit', { shouldCount })
+          client.call("io.example.toggleLimit", { shouldCount });
         for (let i = 0; i < 5; i++) {
-          await makeCall(true)
+          await makeCall(true);
         }
         await assertRejects(
           () => makeCall(true),
           Error,
-          'Rate Limit Exceeded'
-        )
+          "Rate Limit Exceeded",
+        );
         for (let i = 0; i < 4; i++) {
-          await makeCall(false)
+          await makeCall(false);
         }
         await assertRejects(
           () => makeCall(false),
           Error,
-          'Rate Limit Exceeded'
-        )
-      })
+          "Rate Limit Exceeded",
+        );
+      });
 
       await Deno.test("applies global limits", async () => {
-        const makeCall = () => client.call('io.example.noLimit')
-        const calls: Promise<unknown>[] = []
+        const makeCall = () => client.call("io.example.noLimit");
+        const calls: Promise<unknown>[] = [];
         for (let i = 0; i < 110; i++) {
-          calls.push(makeCall())
+          calls.push(makeCall());
         }
         await assertRejects(
           () => Promise.all(calls),
           Error,
-          'Rate Limit Exceeded'
-        )
-      })
+          "Rate Limit Exceeded",
+        );
+      });
 
       await Deno.test("applies global limits to xrpc catchall", async () => {
-        const makeCall = () => client.call('io.example.nonExistent')
+        const makeCall = () => client.call("io.example.nonExistent");
         await assertRejects(
           () => makeCall(),
           Error,
-          'Rate Limit Exceeded'
-        )
-      })
+          "Rate Limit Exceeded",
+        );
+      });
 
       await Deno.test("can bypass rate limits", async () => {
         const makeCall = () =>
           client.call(
-            'io.example.noLimit',
+            "io.example.noLimit",
             {},
             {},
-            { headers: { 'X-RateLimit-Bypass': 'bypass' } },
-          )
-        const calls: Promise<unknown>[] = []
+            { headers: { "X-RateLimit-Bypass": "bypass" } },
+          );
+        const calls: Promise<unknown>[] = [];
         for (let i = 0; i < 110; i++) {
-          calls.push(makeCall())
+          calls.push(makeCall());
         }
-        await Promise.all(calls)
-      })
+        await Promise.all(calls);
+      });
     } finally {
       // Cleanup
-      await closeServer(s)
+      await closeServer(s);
     }
-  }
-})
+  },
+});
