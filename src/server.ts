@@ -2,7 +2,6 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { createGunzip, createBrotliDecompress, createInflate } from 'node:zlib'
 import { Hono } from 'hono'
-import { HTTPException } from 'hono/http-exception'
 import { check, schema } from '@atproto/common'
 import {
   LexXrpcProcedure,
@@ -19,7 +18,6 @@ import {
   AuthVerifier,
   HandlerAuth,
   HandlerPipeThrough,
-  HandlerPipeThroughBuffer,
   HandlerSuccess,
   InternalServerError,
   InvalidRequestError,
@@ -51,10 +49,6 @@ import { Server as HttpServer, IncomingMessage } from 'node:http'
 import type { Context, Next, MiddlewareHandler } from 'hono'
 import { Buffer } from 'node:buffer'
 
-type RequestWithLocals = {
-  _xrpcLocals?: RequestLocals
-}
-
 const REQUEST_LOCALS_KEY = '_xrpcLocals'
 
 export function createServer(lexicons?: LexiconDoc[], options?: Options) {
@@ -67,10 +61,11 @@ export class Server {
   subscriptions = new Map<string, XrpcStreamServer>()
   lex = new Lexicons()
   options: Options
-  middleware: Record<'json' | 'text', any>
+  middleware: Record<'json' | 'text', { limit?: number }>
   globalRateLimiters: RateLimiterI[]
   sharedRateLimiters: Record<string, RateLimiterI>
   routeRateLimiters: Record<string, RateLimiterI[]>
+  abortController?: AbortController
 
   constructor(lexicons?: LexiconDoc[], opts: Options = {}) {
     if (lexicons) {
@@ -163,8 +158,7 @@ export class Server {
 
   // http
   // =
-
-  protected async addRoute(
+  protected addRoute(
     nsid: string,
     def: LexXrpcQuery | LexXrpcProcedure,
     config: XRPCHandlerConfig,
@@ -191,11 +185,6 @@ export class Server {
             const contentType = c.req.header('content-type')
             const contentEncoding = c.req.header('content-encoding')
             const contentLength = c.req.header('content-length')
-            const headers = {
-              'content-type': contentType,
-              'content-encoding': contentEncoding,
-              'content-length': contentLength,
-            }
 
             // Check if we need a body
             const needsBody =
@@ -281,6 +270,7 @@ export class Server {
                         throw new PayloadTooLargeError('request entity too large')
                       }
                       chunks.push(buffer)
+                      yield buffer
                     }
                   })
                   currentBody = Buffer.concat(chunks)
@@ -300,7 +290,6 @@ export class Server {
               def,
               body,
               contentType,
-              routeOpts,
               this.lex,
             )
             c.set('validatedInput', input)
@@ -336,11 +325,11 @@ export class Server {
             auth: undefined,
             params: {},
             input: undefined,
-            async resetRouteRateLimits() {},
+            resetRouteRateLimits: async () => {},
           },
           this.globalRateLimiters.map(
-            (rl) => (ctx: XRPCReqContext) => rl.consume(ctx),
-          ),
+            (rl) => (ctx: XRPCReqContext) => rl.consume(ctx)
+          )
         )
         if (rlRes instanceof RateLimitExceededError) {
           throw rlRes
@@ -381,9 +370,6 @@ export class Server {
     def: LexXrpcQuery | LexXrpcProcedure,
     routeCfg: XRPCHandlerConfig,
   ): MiddlewareHandler {
-    const routeOpts = {
-      blobLimit: routeCfg.opts?.blobLimit ?? this.options.payload?.blobLimit,
-    }
     const validateReqInput = async (c: Context) => {
       return (
         c.get('validatedInput') ||
@@ -392,7 +378,6 @@ export class Server {
           def,
           undefined,
           c.req.header('content-type'),
-          routeOpts,
           this.lex,
         ))
       )
@@ -436,7 +421,7 @@ export class Server {
           auth: locals.auth,
           c,
           req: c.env.incoming as IncomingMessage,
-          resetRouteRateLimits: async () => resetRateLimit(reqCtx),
+          resetRouteRateLimits: () => resetRateLimit(reqCtx),
         }
 
         // handle rate limits
@@ -455,7 +440,7 @@ export class Server {
           const headers = new Headers()
           setHeaders(headers, output)
           headers.set('Content-Type', output.encoding)
-          return new Response(output.stream as any, { 
+          return new Response(output.stream as unknown as ReadableStream<Uint8Array>, { 
             status: 200,
             headers 
           })
@@ -485,7 +470,7 @@ export class Server {
             })
           } else if (output.body instanceof Readable) {
             headers.set('Content-Type', output.encoding)
-            return new Response(output.body as any, {
+            return new Response(output.body as unknown as BodyInit, {
               status: 200,
               headers
             })
@@ -495,12 +480,7 @@ export class Server {
               contentType = `${contentType}; charset=utf-8`
             }
             headers.set('Content-Type', contentType)
-            const body = Buffer.isBuffer(output.body)
-              ? output.body
-              : output.body instanceof Uint8Array
-                ? Buffer.from(output.body)
-                : output.body
-            return new Response(body, {
+            return new Response(output.body as unknown as BodyInit, {
               status: 200,
               headers
             })
@@ -516,7 +496,7 @@ export class Server {
     }
   }
 
-  protected async addSubscription(
+  protected addSubscription(
     nsid: string,
     def: LexXrpcSubscription,
     config: XRPCStreamHandlerConfig,
@@ -581,6 +561,7 @@ export class Server {
   }
 
   public enableStreamingOnListen(httpServer: HttpServer) {
+    // For now, we'll keep the Node.js WebSocket server but add Deno WebSocket support later
     httpServer.on('upgrade', (req, socket, head) => {
       const url = new URL(req.url || '', 'http://x')
       const sub = url.pathname.startsWith('/xrpc/')
@@ -711,7 +692,7 @@ function createErrorMiddleware({
     logger.error(
       {
         err:
-          isInternalError || process.env.NODE_ENV === 'development'
+          isInternalError || Deno.env.get('NODE_ENV') === 'development'
             ? err
             : toSimplifiedErrorLike(err),
         nsid: locals?.nsid,
@@ -735,8 +716,12 @@ function createErrorMiddleware({
   }
 }
 
-function isPinoHttpRequest(req: any): req is { log: { error: (obj: unknown, msg: string) => void } } {
-  return typeof req?.log?.error === 'function'
+type PinoLike = { log: { error: (obj: unknown, msg: string) => void } };
+
+function isPinoHttpRequest(req: unknown): req is PinoLike {
+  if (!req || typeof req !== 'object') return false;
+  const maybeLogger = req as Partial<PinoLike>;
+  return !!(maybeLogger.log?.error && typeof maybeLogger.log.error === 'function');
 }
 
 function toSimplifiedErrorLike(err: unknown): unknown {

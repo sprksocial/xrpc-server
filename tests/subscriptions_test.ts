@@ -4,8 +4,8 @@ import getPort from 'get-port'
 import { WebSocket, WebSocketServer, createWebSocketStream } from 'ws'
 import { wait } from '@atproto/common'
 import { LexiconDoc } from '@atproto/lexicon'
-import { ErrorFrame, Frame, MessageFrame, Subscription, byFrame } from '../src/index.ts'
-import * as xrpcServer from '../src/index.ts'
+import { ErrorFrame, Frame, MessageFrame, Subscription, byFrame } from '../mod.ts'
+import * as xrpcServer from '../mod.ts'
 import {
   basicAuthHeaders,
   closeServer,
@@ -266,7 +266,8 @@ Deno.test({
 
           const messages: { count: number }[] = []
           for await (const msg of sub) {
-            messages.push(msg)
+            const typedMsg = msg as { count: number }
+            messages.push(typedMsg)
           }
 
           assertEquals(messages, [
@@ -295,9 +296,10 @@ Deno.test({
 
           let disconnected = false
           for await (const msg of sub) {
-            assertEquals(msg.count >= countdown - 1, true) // No skips
-            countdown = Math.min(countdown, msg.count) // Only allow forward movement
-            if (msg.count <= 6 && !disconnected) {
+            const typedMsg = msg as { count: number }
+            assertEquals(typedMsg.count >= countdown - 1, true) // No skips
+            countdown = Math.min(countdown, typedMsg.count) // Only allow forward movement
+            if (typedMsg.count <= 6 && !disconnected) {
               disconnected = true
               server.subscriptions.forEach(({ wss }: { wss: WebSocketServer }) => {
                 wss.clients.forEach((c: WebSocket) => c.terminate())
@@ -330,8 +332,9 @@ Deno.test({
           const messages: { count: number }[] = []
           try {
             for await (const msg of sub) {
-              messages.push(msg)
-              if (msg.count <= 6 && !disconnected) {
+              const typedMsg = msg as { count: number }
+              messages.push(typedMsg)
+              if (typedMsg.count <= 6 && !disconnected) {
                 disconnected = true
                 abortController.abort(new Error('Oops!'))
               }
@@ -364,7 +367,7 @@ Deno.test({
           let firstConnection = true
           let firstWasClosed = false
           const firstSocketClosed = new Promise<void>((resolve) => {
-            server.on('connection', async (socket) => {
+            server.on('connection', async (socket: WebSocket) => {
               if (firstConnection === true) {
                 firstConnection = false
                 socket.on('close', () => {
@@ -373,18 +376,17 @@ Deno.test({
                 })
                 socket.pause()
                 await wait(600)
-                // shouldn't send this message because the socket would be closed
                 const frame = new ErrorFrame({
                   error: 'AuthenticationRequired',
                   message: 'Authentication Required',
                 })
-                socket.send(frame.toBytes(), { binary: true }, (err) => {
+                socket.send(frame.toBytes(), { binary: true }, (err: Error | undefined) => {
                   if (err) throw err
                   socket.close(xrpcServer.CloseCode.Normal)
                 })
               } else {
                 const frame = new MessageFrame({ count: 1 })
-                socket.send(frame.toBytes(), { binary: true }, (err) => {
+                socket.send(frame.toBytes(), { binary: true }, (err: Error | undefined) => {
                   if (err) throw err
                   socket.close(xrpcServer.CloseCode.Normal)
                 })
@@ -406,7 +408,8 @@ Deno.test({
 
           const messages: { count: number }[] = []
           for await (const msg of subscription) {
-            messages.push(msg)
+            const typedMsg = msg as { count: number }
+            messages.push(typedMsg)
           }
 
           await firstSocketClosed

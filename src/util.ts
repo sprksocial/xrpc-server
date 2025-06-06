@@ -1,7 +1,6 @@
 import assert from 'node:assert'
 import { IncomingMessage } from 'node:http'
-import { Duplex, Readable, pipeline } from 'node:stream'
-import { MaxSizeChecker, createDecoders } from '@atproto/common'
+import { Duplex, Readable } from 'node:stream'
 import {
   LexXrpcProcedure,
   LexXrpcQuery,
@@ -9,19 +8,21 @@ import {
   Lexicons,
   jsonToLex,
 } from '@atproto/lexicon'
-import { ResponseType } from '@atproto/xrpc'
 import {
   HandlerInput,
   HandlerSuccess,
   InternalServerError,
   InvalidRequestError,
   Params,
-  RouteOpts,
   UndecodedParams,
-  XRPCError,
   handlerSuccess,
 } from './types.ts'
 import { Buffer } from 'node:buffer'
+
+// Add type at the top
+type StreamDestination = Duplex | NodeJS.WritableStream;
+type StreamListener = (...args: unknown[]) => void;
+type ReadableStreamLike = Pick<Readable, 'pipe' | 'on' | 'removeListener'>;
 
 export function decodeQueryParams(
   def: LexXrpcProcedure | LexXrpcQuery | LexXrpcSubscription,
@@ -76,20 +77,18 @@ export function getQueryParams(url = ''): Record<string, string[]> {
   return result
 }
 
-// Add a type for a request-like object that works with both Express and Hono
+// Update RequestLike interface
 export type RequestLike = {
   headers: { [key: string]: string | string[] | undefined }
   body?: unknown
   readableEnded?: boolean
   method?: string
   url?: string
-  pipe?: (destination: any) => any
-  on?: (event: string, listener: (...args: any[]) => void) => any
-  removeListener?: (event: string, listener: (...args: any[]) => void) => any
+} & Partial<ReadableStreamLike> & {
   destroy?: () => void
   resume?: () => void
   pause?: () => void
-  unpipe?: (destination?: any) => void
+  unpipe?: (destination?: StreamDestination) => void
 }
 
 export async function validateInput(
@@ -97,7 +96,6 @@ export async function validateInput(
   def: LexXrpcProcedure | LexXrpcQuery,
   body: unknown,
   contentType: string | undefined | null,
-  opts: RouteOpts,
   lexicons: Lexicons,
 ): Promise<HandlerInput | undefined> {
   let processedBody = body
@@ -241,67 +239,6 @@ function getBodyPresence(
     return 'missing'
   }
   return 'present'
-}
-
-function decodeBodyStream(
-  req: RequestLike,
-  maxSize: number | undefined,
-): Readable {
-  const contentEncoding = Array.isArray(req.headers['content-encoding'])
-    ? req.headers['content-encoding'][0]
-    : req.headers['content-encoding']
-  const contentLength = Array.isArray(req.headers['content-length'])
-    ? req.headers['content-length'][0]
-    : req.headers['content-length']
-
-  const contentLengthParsed = contentLength
-    ? parseInt(contentLength, 10)
-    : undefined
-
-  if (Number.isNaN(contentLengthParsed)) {
-    throw new XRPCError(ResponseType.InvalidRequest, 'invalid content-length')
-  }
-
-  if (
-    maxSize !== undefined &&
-    contentLengthParsed !== undefined &&
-    contentLengthParsed > maxSize
-  ) {
-    throw new XRPCError(
-      ResponseType.PayloadTooLarge,
-      'request entity too large',
-    )
-  }
-
-  let transforms: Duplex[]
-  try {
-    transforms = createDecoders(contentEncoding)
-  } catch (cause) {
-    throw new XRPCError(
-      ResponseType.UnsupportedMediaType,
-      'unsupported content-encoding',
-      undefined,
-      { cause },
-    )
-  }
-
-  if (maxSize !== undefined) {
-    const maxSizeChecker = new MaxSizeChecker(
-      maxSize,
-      () =>
-        new XRPCError(ResponseType.PayloadTooLarge, 'request entity too large'),
-    )
-    transforms.push(maxSizeChecker)
-  }
-
-  // If req is not a proper Readable stream, return undefined
-  if (!req.pipe || !req.on || !req.removeListener) {
-    return undefined as any
-  }
-
-  return transforms.length > 0
-    ? (pipeline([req as any, ...transforms], () => {}) as Duplex)
-    : req as any
 }
 
 export function serverTimingHeader(timings: ServerTiming[]) {

@@ -1,7 +1,7 @@
 import { AddressInfo } from 'node:net'
 import { LexiconDoc } from '@atproto/lexicon'
 import { XRPCError, XRPCInvalidResponseError, XrpcClient } from '@atproto/xrpc'
-import * as xrpcServer from '../src/index.ts'
+import * as xrpcServer from '../mod.ts'
 import { closeServer, createServer } from './_util.ts'
 import { assertEquals, assertRejects, assert } from "jsr:@std/assert"
 
@@ -149,9 +149,9 @@ Deno.test({
     const server = xrpcServer.createServer(LEXICONS, { validateResponse: false }) // disable validateResponse to test client validation
     const s = await createServer(server)
     server.method('io.example.error', (ctx: { params: xrpcServer.Params }) => {
-      if (ctx.params.which === 'foo') {
+      if (ctx.params['which'] === 'foo') {
         throw new xrpcServer.InvalidRequestError('It was this one!', 'Foo')
-      } else if (ctx.params.which === 'bar') {
+      } else if (ctx.params['which'] === 'bar') {
         return { status: 400, error: 'Bar', message: 'It was that one!' }
       } else {
         return { status: 400 }

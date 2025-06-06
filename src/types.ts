@@ -323,7 +323,8 @@ export class XRPCError extends Error {
     }
 
     if (isHttpError(cause)) {
-      return new XRPCError(cause.status, cause.message, cause.name, { cause })
+      const httpError = cause as { status: number; message: string; name: string }
+      return new XRPCError(httpError.status, httpError.message, httpError.name, { cause })
     }
 
     if (isHandlerError(cause)) {
@@ -529,13 +530,5 @@ export class MethodNotImplementedError extends XRPCError {
       instance instanceof XRPCError &&
       instance.type === ResponseType.MethodNotImplemented
     )
-  }
-}
-
-export const nsid = () => {
-  try {
-    // ... existing code ...
-  } catch (e) {
-    // ... existing code ...
   }
 }

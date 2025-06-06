@@ -1,18 +1,38 @@
 import { once } from 'node:events'
 import * as http from 'node:http'
-import * as xrpc from '../src/index.ts'
+import * as xrpc from '../mod.ts'
 import { AuthRequiredError } from '../src/types.ts'
-import { serve } from '@hono/node-server'
 import { Buffer } from 'node:buffer'
 
 export async function createServer(
   server: xrpc.Server 
 ): Promise<http.Server> {
-  const httpServer = serve({
-    fetch: server.app.fetch,
-    port: 0,
-  }) as http.Server
+  const httpServer = http.createServer((req, res) => {
+    const fetchPromise = server.app.fetch(new Request(req.url || '', {
+      method: req.method || 'GET',
+      headers: req.headers as HeadersInit,
+      body: req.method !== 'GET' && req.method !== 'HEAD' ? req as unknown as BodyInit : null,
+    }))
 
+    Promise.resolve(fetchPromise).then((response: Response) => {
+      res.statusCode = response.status
+      response.headers.forEach((value: string, key: string) => res.setHeader(key, value))
+      if (response.body) {
+        response.body.pipeTo(new WritableStream({
+          write(chunk) {
+            res.write(chunk)
+          },
+          close() {
+            res.end()
+          }
+        }))
+      } else {
+        res.end()
+      }
+    })
+  })
+
+  httpServer.listen(0)
   server.enableStreamingOnListen(httpServer)
 
   // Add XRPC routes to the server

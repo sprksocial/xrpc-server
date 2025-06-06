@@ -10,7 +10,7 @@ import {
   XrpcStreamServer,
   byFrame,
   byMessage,
-} from '../src/index.ts'
+} from '../mod.ts'
 import { assertEquals, assertInstanceOf } from "jsr:@std/assert"
 
 const wait = (ms: number) => new Promise((res) => setTimeout(res, ms))

@@ -1,7 +1,7 @@
 import { AddressInfo } from 'node:net'
 import { LexiconDoc } from '@atproto/lexicon'
 import { XrpcClient } from '@atproto/xrpc'
-import * as xrpcServer from '../src/index.ts'
+import * as xrpcServer from '../mod.ts'
 import { closeServer, createServer } from './_util.ts'
 import { assertEquals } from "jsr:@std/assert"
 

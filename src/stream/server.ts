@@ -9,8 +9,8 @@ export class XrpcStreamServer {
   constructor(opts: ServerOptions & { handler: Handler }) {
     const { handler, ...serverOpts } = opts
     this.wss = new WebSocketServer(serverOpts)
-    this.wss.on('connection', async (socket, req) => {
-      socket.on('error', (err) => logger.error(err, 'websocket error'))
+    this.wss.on('connection', async (socket: WebSocket, req: IncomingMessage) => {
+      socket.on('error', (err: Error) => logger.error(err, 'websocket error'))
       try {
         const ac = new AbortController()
         const iterator = unwrapIterator(handler(req, ac.signal, socket, this))
@@ -21,9 +21,7 @@ export class XrpcStreamServer {
         const safeFrames = wrapIterator(iterator)
         for await (const frame of safeFrames) {
           await new Promise((res, rej) => {
-            socket.send(frame.toBytes(), { binary: true }, (err) => {
-              // @TODO this callback may give more aggressive on backpressure than
-              // we ultimately want, but trying it out for the time being.
+            socket.send((frame as Frame).toBytes(), { binary: true }, (err: Error | undefined) => {
               if (err) return rej(err)
               res(undefined)
             })

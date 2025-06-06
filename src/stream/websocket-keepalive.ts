@@ -44,7 +44,7 @@ export class WebSocketKeepAlive {
           this.startHeartbeat(this.ws)
         }
       })
-      this.ws.once('close', (code, reason) => {
+      this.ws.once('close', (code: number, reason: string) => {
         if (code === CloseCode.Abnormal) {
           // Forward into an error to distinguish from a clean close
           ac.abort(

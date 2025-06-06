@@ -2,8 +2,8 @@ import { AddressInfo } from 'node:net'
 import { MINUTE } from '@atproto/common'
 import { LexiconDoc } from '@atproto/lexicon'
 import { XrpcClient } from '@atproto/xrpc'
-import * as xrpcServer from '../src/index.ts'
-import { RateLimiter } from '../src/index.ts'
+import * as xrpcServer from '../mod.ts'
+import { RateLimiter } from '../mod.ts'
 import { closeServer, createServer } from './_util.ts'
 import { assertRejects } from "jsr:@std/assert"
 

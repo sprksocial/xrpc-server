@@ -5,7 +5,7 @@ import { cidForCbor } from '@atproto/common'
 import { randomBytes } from '@atproto/crypto'
 import { LexiconDoc } from '@atproto/lexicon'
 import { ResponseType, XrpcClient } from '@atproto/xrpc'
-import * as xrpcServer from '../src/index.ts'
+import * as xrpcServer from '../mod.ts'
 import { logger } from '../src/logger.ts'
 import { closeServer, createServer } from './_util.ts'
 import { assertEquals, assertRejects, assertObjectMatch, assert } from "jsr:@std/assert"
@@ -135,7 +135,7 @@ Deno.test({
     })
     server.method(
       'io.example.validationTest',
-      (ctx: { params: xrpcServer.Params; input?: xrpcServer.HandlerInput }) => {
+      (ctx: xrpcServer.XRPCReqContext) => {
         if (ctx.input?.body instanceof Readable) {
           throw new Error('Input is readable')
         }
@@ -152,7 +152,7 @@ Deno.test({
     }))
     server.method(
       'io.example.blobTest',
-      async (ctx: { input?: xrpcServer.HandlerInput }) => {
+      async (ctx: xrpcServer.XRPCReqContext) => {
         const buffer = await consumeInput(ctx.input?.body)
         const cid = await cidForCbor(buffer)
         return {

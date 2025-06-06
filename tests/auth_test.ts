@@ -6,7 +6,7 @@ import { MINUTE } from '@atproto/common'
 import { Secp256k1Keypair } from '@atproto/crypto'
 import { LexiconDoc } from '@atproto/lexicon'
 import { XRPCError, XrpcClient } from '@atproto/xrpc'
-import * as xrpcServer from '../src/index.ts'
+import * as xrpcServer from '../mod.ts'
 import {
   basicAuthHeaders,
   closeServer,
