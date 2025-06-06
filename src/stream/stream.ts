@@ -1,23 +1,34 @@
-import { DuplexOptions } from "node:stream";
-import { createWebSocketStream, WebSocket } from "ws";
+import type { DuplexOptions } from "node:stream";
+import type { WebSocket, WebSocketStream } from "ws";
+import { createWebSocketStream } from "ws";
 import { ResponseType, XRPCError } from "@atproto/xrpc";
-import { Frame, MessageFrame } from "./frames.ts";
+import { Frame } from "./frames.ts";
+import type { MessageFrame } from "./frames.ts";
 
-export function streamByteChunks(ws: WebSocket, options?: DuplexOptions) {
+export function streamByteChunks(
+  ws: WebSocket,
+  options?: DuplexOptions,
+): WebSocketStream {
   return createWebSocketStream(ws, {
     ...options,
     readableObjectMode: true, // Ensures frame bytes don't get buffered/combined together
   });
 }
 
-export async function* byFrame(ws: WebSocket, options?: DuplexOptions) {
+export async function* byFrame(
+  ws: WebSocket,
+  options?: DuplexOptions,
+): AsyncGenerator<Frame> {
   const wsStream = streamByteChunks(ws, options);
   for await (const chunk of wsStream) {
     yield Frame.fromBytes(chunk);
   }
 }
 
-export async function* byMessage(ws: WebSocket, options?: DuplexOptions) {
+export async function* byMessage(
+  ws: WebSocket,
+  options?: DuplexOptions,
+): AsyncGenerator<MessageFrame<unknown>> {
   const wsStream = streamByteChunks(ws, options);
   for await (const chunk of wsStream) {
     const msg = ensureChunkIsMessage(chunk);

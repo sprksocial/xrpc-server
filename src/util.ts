@@ -244,7 +244,7 @@ function getBodyPresence(
   return "present";
 }
 
-export function serverTimingHeader(timings: ServerTiming[]) {
+export function serverTimingHeader(timings: ServerTiming[]): string {
   return timings
     .map((timing) => {
       let header = timing.name;
@@ -262,11 +262,11 @@ export class ServerTimer implements ServerTiming {
     public name: string,
     public description?: string,
   ) {}
-  start() {
+  start(): ServerTimer {
     this.startMs = Date.now();
     return this;
   }
-  stop() {
+  stop(): ServerTimer {
     assert(this.startMs, "timer hasn't been started");
     this.duration = Date.now() - this.startMs;
     return this;
@@ -279,7 +279,9 @@ export interface ServerTiming {
   description?: string;
 }
 
-export const parseReqNsid = (req: IncomingMessage & { originalUrl?: string }) =>
+export const parseReqNsid = (
+  req: IncomingMessage & { originalUrl?: string },
+): string =>
   parseUrlNsid(req.originalUrl || (req.url || "/"));
 
 /**

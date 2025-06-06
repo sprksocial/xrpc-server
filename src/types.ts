@@ -1,6 +1,6 @@
-import { IncomingMessage } from "node:http";
+import type { IncomingMessage } from "node:http";
 import { Readable } from "node:stream";
-import { Context, Next } from "hono";
+import type { Context, Next } from "hono";
 import { isHttpError } from "http-errors";
 import { z } from "zod";
 import { Buffer } from "node:buffer";
@@ -11,7 +11,6 @@ import {
   ResponseTypeStrings,
   XRPCError as XRPCClientError,
 } from "@atproto/xrpc";
-import * as http from "node:http";
 
 type ErrorOptions = {
   cause?: unknown;
@@ -53,56 +52,85 @@ export type UndecodedParams = Record<string, string | string[]>;
 export type Primitive = string | number | boolean;
 export type Params = Record<string, Primitive | Primitive[] | undefined>;
 
+export type HandlerInput = {
+  encoding: string;
+  body: unknown;
+};
+
 export const handlerInput = z.object({
   encoding: z.string(),
-  body: z.any(),
-});
-export type HandlerInput = z.infer<typeof handlerInput>;
+  body: z.unknown(),
+}).required().strict() as z.ZodType<HandlerInput>;
+
+export type HandlerAuth = {
+  credentials: unknown;
+  artifacts: unknown;
+};
 
 export const handlerAuth = z.object({
-  credentials: z.any(),
-  artifacts: z.any(),
-});
-export type HandlerAuth = z.infer<typeof handlerAuth>;
+  credentials: z.unknown(),
+  artifacts: z.unknown(),
+}).required({
+  credentials: true,
+  artifacts: true
+}).strict() as z.ZodType<HandlerAuth>;
 
-export const headersSchema = z.record(z.string());
+export const headersSchema: z.ZodType<Record<string, string>> = z.record(z.string());
+
+export type HandlerSuccess = {
+  encoding: string;
+  body: unknown;
+  headers?: Record<string, string>;
+};
 
 export const handlerSuccess = z.object({
   encoding: z.string(),
-  body: z.any(),
+  body: z.unknown(),
   headers: headersSchema.optional(),
-});
-export type HandlerSuccess = z.infer<typeof handlerSuccess>;
+}).strict() as z.ZodType<HandlerSuccess>;
 
-export const handlerPipeThroughBuffer = z.object({
+export type HandlerPipeThroughBuffer = {
+  encoding: string;
+  buffer: Buffer;
+  headers?: Record<string, string>;
+};
+
+export const handlerPipeThroughBuffer: z.ZodType<HandlerPipeThroughBuffer> = z.object({
   encoding: z.string(),
   buffer: z.instanceof(Buffer),
   headers: headersSchema.optional(),
 });
 
-export type HandlerPipeThroughBuffer = z.infer<typeof handlerPipeThroughBuffer>;
+export type HandlerPipeThroughStream = {
+  encoding: string;
+  stream: Readable;
+  headers?: Record<string, string>;
+};
 
-export const handlerPipeThroughStream = z.object({
+export const handlerPipeThroughStream: z.ZodType<HandlerPipeThroughStream> = z.object({
   encoding: z.string(),
   stream: z.instanceof(Readable),
   headers: headersSchema.optional(),
 });
 
-export type HandlerPipeThroughStream = z.infer<typeof handlerPipeThroughStream>;
+export type HandlerPipeThrough = HandlerPipeThroughBuffer | HandlerPipeThroughStream;
 
-export const handlerPipeThrough = z.union([
+export const handlerPipeThrough: z.ZodType<HandlerPipeThrough> = z.union([
   handlerPipeThroughBuffer,
   handlerPipeThroughStream,
 ]);
 
-export type HandlerPipeThrough = z.infer<typeof handlerPipeThrough>;
+export type HandlerError = {
+  status: number;
+  error?: string;
+  message?: string;
+};
 
-export const handlerError = z.object({
+export const handlerError: z.ZodType<HandlerError> = z.object({
   status: z.number(),
   error: z.string().optional(),
   message: z.string().optional(),
 });
-export type HandlerError = z.infer<typeof handlerError>;
 
 export type HandlerOutput = HandlerSuccess | HandlerPipeThrough | HandlerError;
 
@@ -116,7 +144,7 @@ export type XRPCReqContext = {
 };
 
 export type XRPCStreamReqContext = {
-  req: http.IncomingMessage;
+  req: IncomingMessage;
   params: Params;
   auth: HandlerAuth | undefined;
   signal: AbortSignal;
@@ -295,12 +323,12 @@ export class XRPCError extends Error {
     return type;
   }
 
-  get payload() {
+  get payload(): { error: string; message: string } {
     return {
-      error: this.customErrorName ?? this.typeName,
+      error: this.customErrorName ?? this.typeName ?? 'Unknown',
       message: this.type === ResponseType.InternalServerError
-        ? this.typeStr // Do not respond with error details for 500s
-        : this.errorMessage || this.typeStr,
+        ? this.typeStr ?? 'Internal Server Error'
+        : this.errorMessage || this.typeStr || 'Unknown Error',
     };
   }
 

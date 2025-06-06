@@ -56,15 +56,18 @@ import { Buffer } from "node:buffer";
 
 const REQUEST_LOCALS_KEY = "_xrpcLocals";
 
-export function createServer(lexicons?: LexiconDoc[], options?: Options) {
+export function createServer(
+  lexicons?: LexiconDoc[],
+  options?: Options,
+): Server {
   return new Server(lexicons, options);
 }
 
 export class Server {
   app: Hono = new Hono();
   routes: Hono = new Hono();
-  subscriptions = new Map<string, XrpcStreamServer>();
-  lex = new Lexicons();
+  subscriptions: Map<string, XrpcStreamServer> = new Map<string, XrpcStreamServer>();
+  lex: Lexicons = new Lexicons();
   options: Options;
   middleware: Record<"json" | "text", { limit?: number }>;
   globalRateLimiters: RateLimiterI[];
@@ -341,9 +344,8 @@ export class Server {
             resetRouteRateLimits: async () => {},
           },
           this.globalRateLimiters.map(
-            (rl) => (ctx: XRPCReqContext) => rl.consume(ctx),
-          ),
-        );
+            (rl) => (ctx: XRPCReqContext) => rl.consume(ctx)),
+          );
         if (rlRes instanceof RateLimitExceededError) {
           throw rlRes;
         }

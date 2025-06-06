@@ -1,7 +1,8 @@
 {
   "name": "@sprk/xrpc-server",
   "version": "0.1.0",
-  "exports": "mod.ts",
+  "exports": "./mod.ts",
+  "license": "MIT",
   "imports": {
     "@atproto/common": "npm:@atproto/common@^0.4.11",
     "@atproto/crypto": "npm:@atproto/crypto@^0.4.4",

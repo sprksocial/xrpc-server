@@ -177,7 +177,7 @@ export const resetMany = async (
 export const setResHeaders = (
   ctx: XRPCReqContext,
   status: RateLimiterStatus,
-) => {
+): void => {
   ctx.c.header("RateLimit-Limit", status.limit.toString());
   ctx.c.header("RateLimit-Remaining", status.remainingPoints.toString());
   ctx.c.header(

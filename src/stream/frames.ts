@@ -1,14 +1,12 @@
 import * as uint8arrays from "uint8arrays";
 import { cborDecodeMulti, cborEncode } from "@atproto/common";
-import {
+import type {
   ErrorFrameBody,
-  errorFrameBody,
   ErrorFrameHeader,
   FrameHeader,
-  frameHeader,
-  FrameType,
   MessageFrameHeader,
 } from "./types.ts";
+import { frameHeader, errorFrameBody, FrameType } from "./types.ts";
 
 export abstract class Frame {
   abstract header: FrameHeader;
@@ -25,7 +23,7 @@ export abstract class Frame {
   isError(): this is ErrorFrame {
     return this.op === FrameType.Error;
   }
-  static fromBytes(bytes: Uint8Array) {
+  static fromBytes(bytes: Uint8Array): Frame {
     const decoded = cborDecodeMulti(bytes);
     if (decoded.length > 2) {
       throw new Error("Too many CBOR data items in frame");
@@ -72,7 +70,7 @@ export class MessageFrame<T = Record<string, unknown>> extends Frame {
       : { op: FrameType.Message };
     this.body = body;
   }
-  get type() {
+  get type(): string | undefined {
     return this.header.t;
   }
 }
@@ -85,10 +83,10 @@ export class ErrorFrame<T extends string = string> extends Frame {
     this.header = { op: FrameType.Error };
     this.body = body;
   }
-  get code() {
+  get code(): string {
     return this.body.error;
   }
-  get message() {
+  get message(): string | undefined {
     return this.body.message;
   }
 }

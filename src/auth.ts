@@ -51,7 +51,9 @@ export const createServiceJwt = async (
   return `${toSignStr}.${ui8.toString(sig, "base64url")}`;
 };
 
-export const createServiceAuthHeaders = async (params: ServiceJwtParams) => {
+export const createServiceAuthHeaders = async (
+  params: ServiceJwtParams,
+): Promise<{ headers: { authorization: string } }> => {
   const jwt = await createServiceJwt(params);
   return {
     headers: { authorization: `Bearer ${jwt}` },

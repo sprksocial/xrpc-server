@@ -5,28 +5,42 @@ export enum FrameType {
   Error = -1,
 }
 
+export type MessageFrameHeader = {
+  op: FrameType.Message;
+  t?: string;
+};
+
 export const messageFrameHeader = z.object({
   op: z.literal(FrameType.Message), // Frame op
   t: z.string().optional(), // Message body type discriminator
-});
-export type MessageFrameHeader = z.infer<typeof messageFrameHeader>;
+}).strict() as z.ZodType<MessageFrameHeader>;
+
+export type ErrorFrameHeader = {
+  op: FrameType.Error;
+};
 
 export const errorFrameHeader = z.object({
   op: z.literal(FrameType.Error),
-});
+}).strict() as z.ZodType<ErrorFrameHeader>;
+
+export type ErrorFrameBodyBase = {
+  error: string;
+  message?: string;
+};
+
+export type ErrorFrameBody<T extends string = string> = {
+  error: T;
+  message?: string;
+};
+
 export const errorFrameBody = z.object({
   error: z.string(), // Error code
   message: z.string().optional(), // Error message
-});
-export type ErrorFrameHeader = z.infer<typeof errorFrameHeader>;
-export type ErrorFrameBody<T extends string = string> =
-  & { error: T }
-  & z.infer<
-    typeof errorFrameBody
-  >;
+}).strict() as z.ZodType<ErrorFrameBodyBase>;
 
-export const frameHeader = z.union([messageFrameHeader, errorFrameHeader]);
-export type FrameHeader = z.infer<typeof frameHeader>;
+export type FrameHeader = MessageFrameHeader | ErrorFrameHeader;
+
+export const frameHeader = z.union([messageFrameHeader, errorFrameHeader]) as z.ZodType<FrameHeader>;
 
 export class DisconnectError extends Error {
   constructor(
