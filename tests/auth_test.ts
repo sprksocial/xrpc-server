@@ -1,10 +1,11 @@
-import { createPrivateKey, KeyObject } from "node:crypto";
-import * as http from "node:http";
-import { AddressInfo } from "node:net";
+import { createPrivateKey } from "node:crypto";
+import type { KeyObject } from "node:crypto";
+import type * as http from "node:http";
+import type { AddressInfo } from "node:net";
 import * as jose from "jose";
 import { MINUTE } from "@atproto/common";
 import { Secp256k1Keypair } from "@atproto/crypto";
-import { LexiconDoc } from "@atproto/lexicon";
+import type { LexiconDoc } from "@atproto/lexicon";
 import { XrpcClient, XRPCError } from "@atproto/xrpc";
 import * as xrpcServer from "../mod.ts";
 import {
@@ -55,15 +56,28 @@ const LEXICONS: LexiconDoc[] = [
 let s: http.Server;
 let client: XrpcClient;
 const server = xrpcServer.createServer(LEXICONS);
+
+type AuthTestResponse = {
+  username: string | undefined;
+  original: string | undefined;
+};
+
+type AuthTestAuth = {
+  credentials: { username: string };
+  artifacts: { original: string };
+};
+
 server.method("io.example.authTest", {
   auth: createBasicAuth({ username: "admin", password: "password" }),
-  handler: ({ auth }) => {
+  handler: ({ auth }: xrpcServer.XRPCReqContext) => {
+    const credentials = auth?.credentials as { username: string } | undefined;
+    const artifacts = auth?.artifacts as { original: string } | undefined;
     return {
       encoding: "application/json",
       body: {
-        username: auth?.credentials?.username,
-        original: auth?.artifacts?.original,
-      },
+        username: credentials?.username,
+        original: artifacts?.original,
+      } satisfies AuthTestResponse,
     };
   },
 });

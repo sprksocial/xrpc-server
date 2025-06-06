@@ -1,6 +1,6 @@
 import { once } from "node:events";
 import * as http from "node:http";
-import * as xrpc from "../mod.ts";
+import type * as xrpc from "../mod.ts";
 import { AuthRequiredError } from "../src/types.ts";
 import { Buffer } from "node:buffer";
 
