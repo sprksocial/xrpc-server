@@ -97,7 +97,7 @@ export async function validateInput(
   nsid: string,
   def: LexXrpcProcedure | LexXrpcQuery,
   body: unknown,
-  headers: { [key: string]: string | string[] | undefined },
+  contentType: string | undefined | null,
   opts: RouteOpts,
   lexicons: Lexicons,
 ): Promise<HandlerInput | undefined> {
@@ -113,7 +113,7 @@ export async function validateInput(
     processedBody = Buffer.concat(chunks)
   }
 
-  const bodyPresence = getBodyPresence(processedBody, headers)
+  const bodyPresence = getBodyPresence(processedBody, contentType)
   if (bodyPresence === 'present' && (def.type !== 'procedure' || !def.input)) {
     throw new InvalidRequestError(
       `A request body was provided when none was expected`,
@@ -129,9 +129,6 @@ export async function validateInput(
   }
 
   // mimetype
-  const contentType = Array.isArray(headers['content-type'])
-    ? headers['content-type'][0]
-    : headers['content-type']
   const inputEncoding = normalizeMime(contentType || '')
   if (
     def.input?.encoding &&
@@ -230,30 +227,18 @@ function isValidEncoding(expected: string, actual: string): boolean {
 
 function getBodyPresence(
   body: unknown,
-  headers: { [key:string]: string | string[] | undefined },
+  contentType: string | undefined | null,
 ): 'present' | 'missing' {
   if (body === undefined || body === null) {
     return 'missing'
   }
-  if (
-    typeof body === 'string' &&
-    body.length === 0 &&
-    !headers['content-type']
-  ) {
+  if (typeof body === 'string' && body.length === 0 && !contentType) {
     return 'missing'
   }
-  if (
-    Buffer.isBuffer(body) &&
-    body.length === 0 &&
-    !headers['content-type']
-  ) {
+  if (Buffer.isBuffer(body) && body.length === 0 && !contentType) {
     return 'missing'
   }
-  if (
-    body instanceof Uint8Array &&
-    body.length === 0 &&
-    !headers['content-type']
-  ) {
+  if (body instanceof Uint8Array && body.length === 0 && !contentType) {
     return 'missing'
   }
   return 'present'

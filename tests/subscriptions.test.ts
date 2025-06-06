@@ -356,30 +356,33 @@ describe('Subscriptions', () => {
     const server = new WebSocketServer({ port })
     let firstConnection = true
     let firstWasClosed = false
-    server.on('connection', async (socket) => {
-      if (firstConnection === true) {
-        firstConnection = false
-        socket.pause()
-        await wait(600)
-        // shouldn't send this message because the socket would be closed
-        const frame = new ErrorFrame({
-          error: 'AuthenticationRequired',
-          message: 'Authentication Required',
-        })
-        socket.send(frame.toBytes(), { binary: true }, (err) => {
-          if (err) throw err
-          socket.close(xrpcServer.CloseCode.Normal)
-        })
-        socket.on('close', () => {
-          firstWasClosed = true
-        })
-      } else {
-        const frame = new MessageFrame({ count: 1 })
-        socket.send(frame.toBytes(), { binary: true }, (err) => {
-          if (err) throw err
-          socket.close(xrpcServer.CloseCode.Normal)
-        })
-      }
+    const firstSocketClosed = new Promise<void>((resolve) => {
+      server.on('connection', async (socket) => {
+        if (firstConnection === true) {
+          firstConnection = false
+          socket.on('close', () => {
+            firstWasClosed = true
+            resolve()
+          })
+          socket.pause()
+          await wait(600)
+          // shouldn't send this message because the socket would be closed
+          const frame = new ErrorFrame({
+            error: 'AuthenticationRequired',
+            message: 'Authentication Required',
+          })
+          socket.send(frame.toBytes(), { binary: true }, (err) => {
+            if (err) throw err
+            socket.close(xrpcServer.CloseCode.Normal)
+          })
+        } else {
+          const frame = new MessageFrame({ count: 1 })
+          socket.send(frame.toBytes(), { binary: true }, (err) => {
+            if (err) throw err
+            socket.close(xrpcServer.CloseCode.Normal)
+          })
+        }
+      })
     })
 
     const subscription = new Subscription({
@@ -399,8 +402,7 @@ describe('Subscriptions', () => {
       messages.push(msg)
     }
 
-    // Wait up to 500ms for the close event to fire
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    await firstSocketClosed
     expect(messages).toEqual([{ count: 1 }])
     expect(firstWasClosed).toBe(true)
     server.close()

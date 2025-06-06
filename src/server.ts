@@ -1,5 +1,6 @@
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { createGunzip, createBrotliDecompress, createInflate } from 'node:zlib'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { check, schema } from '@atproto/common'
@@ -185,29 +186,30 @@ export class Server {
         ...middleware,
         async (c: Context, next: Next): Promise<Response | void> => {
           try {
-            // Convert Headers to plain object
-            const headers: { [key: string]: string | string[] | undefined } = {}
-            c.req.raw.headers.forEach((value, key) => {
-              headers[key.toLowerCase()] = value
-            })
+            const contentType = c.req.header('content-type')
+            const contentEncoding = c.req.header('content-encoding')
+            const contentLength = c.req.header('content-length')
+            const headers = {
+              'content-type': contentType,
+              'content-encoding': contentEncoding,
+              'content-length': contentLength,
+            }
 
             // Check if we need a body
-            const needsBody = def.type === 'procedure' && 'input' in def && def.input
-            if (needsBody && !headers['content-type']) {
-              throw new InvalidRequestError('Request encoding (Content-Type) required but not provided')
+            const needsBody =
+              def.type === 'procedure' && 'input' in def && def.input
+            if (needsBody && !contentType) {
+              throw new InvalidRequestError(
+                'Request encoding (Content-Type) required but not provided',
+              )
             }
 
             // Handle content encoding (compression)
-            const contentEncoding = headers['content-encoding']
             let encodings: string[] = []
             if (contentEncoding) {
-              if (Array.isArray(contentEncoding)) {
-                encodings = contentEncoding.flatMap(e => e.split(',').map(s => s.trim()))
-              } else {
-                encodings = contentEncoding.split(',').map(s => s.trim())
-              }
+              encodings = contentEncoding.split(',').map((s) => s.trim())
               // Filter out 'identity' since it means no transformation
-              encodings = encodings.filter(e => e !== 'identity')
+              encodings = encodings.filter((e) => e !== 'identity')
               for (const encoding of encodings) {
                 if (!['gzip', 'deflate', 'br'].includes(encoding)) {
                   throw new InvalidRequestError('unsupported content-encoding')
@@ -216,9 +218,8 @@ export class Server {
             }
 
             // Handle content length
-            const contentLength = headers['content-length']
             if (contentLength) {
-              const length = Array.isArray(contentLength) ? parseInt(contentLength[0], 10) : parseInt(contentLength, 10)
+              const length = parseInt(contentLength, 10)
               if (isNaN(length)) {
                 throw new InvalidRequestError('invalid content-length')
               }
@@ -229,12 +230,10 @@ export class Server {
 
             // Get the raw body
             let body: unknown
-            const contentType = headers['content-type']
             if (contentType) {
-              const type = Array.isArray(contentType) ? contentType[0] : contentType
-              if (type.includes('application/json')) {
+              if (contentType.includes('application/json')) {
                 body = await c.req.json()
-              } else if (type.includes('text/')) {
+              } else if (contentType.includes('text/')) {
                 body = await c.req.text()
               } else {
                 const buffer = Buffer.from(await c.req.arrayBuffer())
@@ -251,10 +250,6 @@ export class Server {
 
             // Handle decompression if needed
             if (encodings.length > 0 && body instanceof Buffer) {
-              const { createGunzip, createBrotliDecompress, createInflate } = await import('node:zlib')
-              const { pipeline } = await import('node:stream/promises')
-              const { Readable } = await import('node:stream')
-
               let currentBody = body
               let totalSize = 0
               for (const encoding of encodings.reverse()) {
@@ -276,7 +271,7 @@ export class Server {
 
                 const chunks: Buffer[] = []
                 try {
-                  await pipeline(source, transform, async function*(source) {
+                  await pipeline(source, transform, async function* (source) {
                     for await (const chunk of source) {
                       const buffer = Buffer.from(chunk)
                       totalSize += buffer.length
@@ -298,7 +293,14 @@ export class Server {
             }
 
             // Validate the input against the lexicon schema
-            const input = await validateInput(nsid, def, body, headers, routeOpts, this.lex)
+            const input = await validateInput(
+              nsid,
+              def,
+              body,
+              contentType,
+              routeOpts,
+              this.lex,
+            )
             c.set('validatedInput', input)
             await next()
           } catch (err) {
@@ -381,12 +383,17 @@ export class Server {
       blobLimit: routeCfg.opts?.blobLimit ?? this.options.payload?.blobLimit,
     }
     const validateReqInput = async (c: Context) => {
-      const headers: { [key: string]: string | string[] | undefined } = {}
-      for (const [key, value] of Object.entries(c.req.raw.headers)) {
-        headers[key.toLowerCase()] = value
-      }
-      const { headers: _, body: __, ...rest } = c.req.raw
-      return c.get('validatedInput') || (await validateInput(nsid, def, undefined, headers, routeOpts, this.lex))
+      return (
+        c.get('validatedInput') ||
+        (await validateInput(
+          nsid,
+          def,
+          undefined,
+          c.req.header('content-type'),
+          routeOpts,
+          this.lex,
+        ))
+      )
     }
     const validateResOutput =
       this.options.validateResponse === false
@@ -408,7 +415,7 @@ export class Server {
         rls.map((rl) => (ctx: XRPCReqContext) => rl.reset(ctx)),
       )
 
-    return async function (c: Context): Promise<Response> {
+    return async (c: Context): Promise<Response> => {
       try {
         // validate request
         let params = decodeQueryParams(def, c.req.queries())

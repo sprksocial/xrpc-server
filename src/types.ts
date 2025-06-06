@@ -10,9 +10,6 @@ import {
   httpResponseCodeToName,
   httpResponseCodeToString,
 } from '@atproto/xrpc'
-import { LexiconDoc, Lexicons } from '@atproto/lexicon'
-import { WebSocket } from 'ws'
-import { Frame } from './stream'
 import * as http from 'http'
 
 type ErrorOptions = {

@@ -72,9 +72,19 @@ describe('Responses', () => {
   })
 
   it('handles errs on readable streams of bytes', async () => {
-    const attempt = client.call('io.example.readableStream', {
-      shouldErr: true,
-    })
-    await expect(attempt).rejects.toThrow()
+    const originalConsoleError = console.error
+    console.error = jest.fn() // Suppress expected error log
+
+    let err: unknown
+    try {
+      await client.call('io.example.readableStream', {
+        shouldErr: true,
+      })
+    } catch (e) {
+      err = e
+    }
+    expect(err).toBeInstanceOf(Error)
+
+    console.error = originalConsoleError // Restore
   })
 })
