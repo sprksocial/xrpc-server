@@ -113,9 +113,10 @@ Deno.test({
     server.method(
       "io.example.pingFour",
       (ctx: { params: xrpcServer.Params; input?: xrpcServer.HandlerInput }) => {
+        const body = ctx.input?.body as { message: string };
         return {
           encoding: "application/json",
-          body: { message: ctx.input?.body?.message },
+          body: { message: body?.message },
         };
       },
     );

@@ -3,10 +3,9 @@ import { pipeline } from "node:stream/promises";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { Hono } from "hono";
 import { check, schema } from "@atproto/common";
-import {
+import { Lexicons, lexToJson } from "@atproto/lexicon";
+import type {
   LexiconDoc,
-  Lexicons,
-  lexToJson,
   LexXrpcProcedure,
   LexXrpcQuery,
   LexXrpcSubscription,
@@ -20,10 +19,6 @@ import {
   XrpcStreamServer,
 } from "./stream/index.ts";
 import {
-  AuthVerifier,
-  HandlerAuth,
-  HandlerPipeThrough,
-  HandlerSuccess,
   InternalServerError,
   InvalidRequestError,
   isHandlerError,
@@ -31,17 +26,23 @@ import {
   isHandlerPipeThroughStream,
   isShared,
   MethodNotImplementedError,
-  Options,
-  Params,
   PayloadTooLargeError,
-  RateLimiterI,
   RateLimitExceededError,
   XRPCError,
+} from "./types.ts";
+import type {
   XRPCHandler,
   XRPCHandlerConfig,
   XRPCReqContext,
   XRPCStreamHandler,
   XRPCStreamHandlerConfig,
+  RateLimiterI,
+  Options,
+  Params,
+  AuthVerifier,
+  HandlerAuth,
+  HandlerPipeThrough,
+  HandlerSuccess,
 } from "./types.ts";
 import {
   decodeQueryParams,
@@ -49,8 +50,7 @@ import {
   validateInput,
   validateOutput,
 } from "./util.ts";
-import { WebSocket } from "ws";
-import { IncomingMessage, Server as HttpServer } from "node:http";
+import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Context, MiddlewareHandler, Next } from "hono";
 import { Buffer } from "node:buffer";
 

@@ -6,6 +6,13 @@ import * as xrpcServer from "../mod.ts";
 import { closeServer, createServer } from "./_util.ts";
 import { assertEquals, assertExists } from "jsr:@std/assert";
 
+interface IpldInput extends xrpcServer.HandlerInput {
+  body: {
+    cid: unknown;
+    bytes: unknown;
+  };
+}
+
 const LEXICONS: LexiconDoc[] = [
   {
     lexicon: 1,
@@ -55,11 +62,12 @@ Deno.test({
     server.method(
       "io.example.ipld",
       (ctx: { input?: xrpcServer.HandlerInput }) => {
-        const asCid = CID.asCID(ctx.input?.body.cid);
+        const body = ctx.input?.body as { cid: unknown; bytes: unknown };
+        const asCid = CID.asCID(body.cid);
         if (!(asCid instanceof CID)) {
           throw new Error("expected cid");
         }
-        const bytes = ctx.input?.body.bytes;
+        const bytes = body.bytes;
         if (!(bytes instanceof Uint8Array)) {
           throw new Error("expected bytes");
         }

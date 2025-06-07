@@ -173,6 +173,7 @@ Deno.test({
       await upstreamClient.call("io.example.upstreamInvalidResponse");
       return {
         encoding: "json",
+        body: {}
       };
     });
     server.method("io.example.procedure", () => {

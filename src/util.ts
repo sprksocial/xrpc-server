@@ -1,19 +1,17 @@
 import assert from "node:assert";
-import { IncomingMessage } from "node:http";
-import { Duplex, Readable } from "node:stream";
-import {
-  jsonToLex,
+import type { IncomingMessage } from "node:http";
+import type { Duplex, Readable } from "node:stream";
+import { jsonToLex } from "@atproto/lexicon";
+import type {
   Lexicons,
   LexXrpcProcedure,
   LexXrpcQuery,
   LexXrpcSubscription,
 } from "@atproto/lexicon";
-import {
+import { handlerSuccess, InternalServerError, InvalidRequestError } from "./types.ts";
+import type {
   HandlerInput,
   HandlerSuccess,
-  handlerSuccess,
-  InternalServerError,
-  InvalidRequestError,
   Params,
   UndecodedParams,
 } from "./types.ts";

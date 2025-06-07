@@ -160,7 +160,7 @@ Deno.test({
     server.method(
       "io.example.blobTest",
       async (ctx: xrpcServer.XRPCReqContext) => {
-        const buffer = await consumeInput(ctx.input?.body);
+        const buffer = await consumeInput(ctx.input?.body as string | object | Readable);
         const cid = await cidForCbor(buffer);
         return {
           encoding: "json",
