@@ -1,4 +1,4 @@
-import type { Context, Next, HonoRequest } from "hono";
+import type { Context, HonoRequest, Next } from "hono";
 import { isHttpError } from "http-errors";
 import { z } from "zod";
 import {
@@ -103,10 +103,12 @@ export const handlerAuth = z.object({
   artifacts: z.unknown(),
 }).required({
   credentials: true,
-  artifacts: true
+  artifacts: true,
 }).strict() as z.ZodType<HandlerAuth>;
 
-export const headersSchema: z.ZodType<Record<string, string>> = z.record(z.string());
+export const headersSchema: z.ZodType<Record<string, string>> = z.record(
+  z.string(),
+);
 
 export type HandlerSuccess = {
   encoding: string;
@@ -126,11 +128,14 @@ export type HandlerPipeThroughStream = {
   headers?: Record<string, string>;
 };
 
-export const handlerPipeThroughStream: z.ZodType<HandlerPipeThroughStream> = z.object({
-  encoding: z.string(),
-  stream: z.custom<ReadableStream<Uint8Array>>((val) => val instanceof ReadableStream),
-  headers: headersSchema.optional(),
-});
+export const handlerPipeThroughStream: z.ZodType<HandlerPipeThroughStream> = z
+  .object({
+    encoding: z.string(),
+    stream: z.custom<ReadableStream<Uint8Array>>((val) =>
+      val instanceof ReadableStream
+    ),
+    headers: headersSchema.optional(),
+  });
 
 export type HandlerPipeThroughBuffer = {
   encoding: string;
@@ -138,13 +143,16 @@ export type HandlerPipeThroughBuffer = {
   headers?: Record<string, string>;
 };
 
-export const handlerPipeThroughBuffer: z.ZodType<HandlerPipeThroughBuffer> = z.object({
-  encoding: z.string(),
-  buffer: z.custom<Uint8Array>((val) => val instanceof Uint8Array),
-  headers: headersSchema.optional(),
-});
+export const handlerPipeThroughBuffer: z.ZodType<HandlerPipeThroughBuffer> = z
+  .object({
+    encoding: z.string(),
+    buffer: z.custom<Uint8Array>((val) => val instanceof Uint8Array),
+    headers: headersSchema.optional(),
+  });
 
-export type HandlerPipeThrough = HandlerPipeThroughBuffer | HandlerPipeThroughStream;
+export type HandlerPipeThrough =
+  | HandlerPipeThroughBuffer
+  | HandlerPipeThroughStream;
 
 export const handlerPipeThrough: z.ZodType<HandlerPipeThrough> = z.union([
   handlerPipeThroughBuffer,
@@ -198,7 +206,6 @@ export interface AuthVerifierContext {
   c: Context;
   req: HonoRequest;
 }
-
 
 export interface AuthVerifier {
   (ctx: AuthVerifierContext): Promise<AuthOutput> | AuthOutput;
@@ -358,10 +365,10 @@ export class XRPCError extends Error {
 
   get payload(): { error: string; message: string } {
     return {
-      error: this.customErrorName ?? this.typeName ?? 'Unknown',
+      error: this.customErrorName ?? this.typeName ?? "Unknown",
       message: this.type === ResponseType.InternalServerError
-        ? this.typeStr ?? 'Internal Server Error'
-        : this.errorMessage || this.typeStr || 'Unknown Error',
+        ? this.typeStr ?? "Internal Server Error"
+        : this.errorMessage || this.typeStr || "Unknown Error",
     };
   }
 

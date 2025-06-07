@@ -6,7 +6,7 @@ import type {
   FrameHeader,
   MessageFrameHeader,
 } from "./types.ts";
-import { frameHeader, errorFrameBody, FrameType } from "./types.ts";
+import { errorFrameBody, frameHeader, FrameType } from "./types.ts";
 
 export abstract class Frame {
   abstract header: FrameHeader;

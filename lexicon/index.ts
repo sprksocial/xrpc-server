@@ -6,7 +6,7 @@ import type { LexiconDoc } from "@atproto/lexicon";
 export function createServer(lexicons?: LexiconDoc[]) {
   const routes = new Hono();
   const lex = new Lexicons();
-  
+
   if (lexicons) {
     for (const doc of lexicons) {
       lex.add(doc);
@@ -16,7 +16,7 @@ export function createServer(lexicons?: LexiconDoc[]) {
   routes.all("/xrpc/:methodId", async (c: Context, next: Next) => {
     const methodId = c.req.param("methodId");
     const def = lex.getDef(methodId);
-    
+
     if (!def) {
       return c.json({ error: "Method Not Found" }, 404);
     }
@@ -37,9 +37,9 @@ export function createServer(lexicons?: LexiconDoc[]) {
     method(nsid: string, handler: (c: Context) => Promise<Response>) {
       const def = lex.getDef(nsid);
       if (!def) throw new Error(`Unknown lexicon: ${nsid}`);
-      
+
       const method = def.type === "procedure" ? "post" : "get";
       routes[method](`/xrpc/${nsid}`, handler);
-    }
+    },
   };
-} 
+}

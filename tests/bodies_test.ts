@@ -13,7 +13,10 @@ import {
 } from "jsr:@std/assert";
 
 // Web-standard compression helpers
-async function compressData(data: Uint8Array, format: CompressionFormat): Promise<Uint8Array> {
+async function compressData(
+  data: Uint8Array,
+  format: CompressionFormat,
+): Promise<Uint8Array> {
   const stream = new ReadableStream({
     start(controller) {
       controller.enqueue(data);
@@ -169,7 +172,9 @@ Deno.test({
     server.method(
       "io.example.blobTest",
       async (ctx: xrpcServer.XRPCReqContext) => {
-        const buffer = await consumeInput(ctx.input?.body as string | object | ReadableStream);
+        const buffer = await consumeInput(
+          ctx.input?.body as string | object | ReadableStream,
+        );
         const cid = await cidForCbor(buffer);
         return {
           encoding: "json",
@@ -514,7 +519,7 @@ Deno.test({
     await Deno.test("supports multiple encodings", async () => {
       const bytes = randomBytes(1024);
       const expectedCid = await cidForCbor(bytes);
-      
+
       // Apply multiple compressions in sequence
       const gzipped = await compressData(bytes, "gzip");
       const deflated = await compressData(gzipped, "deflate");

@@ -1,9 +1,9 @@
 /**
  * XRPC Server implementation for atproto services.
- * 
+ *
  * This module provides a Hono-based server implementation for atproto's XRPC protocol,
  * with support for Lexicon schema validation, authentication, rate limiting, and streaming.
- * 
+ *
  * ## Features
  * - Full Lexicon schema validation
  * - Built on Hono for high performance
@@ -11,12 +11,12 @@
  * - Rate limiting (global, shared, and per-route)
  * - Streaming support
  * - Server timing utilities
- * 
+ *
  * @example Basic server setup with a simple endpoint
  * ```ts
  * import { createServer } from "jsr:@sprk/xrpc-server";
  * import type { LexiconDoc } from "@atproto/lexicon";
- * 
+ *
  * const lexicons: LexiconDoc[] = [{
  *   lexicon: 1,
  *   id: "com.example.ping",
@@ -33,7 +33,7 @@
  *     },
  *   },
  * }];
- * 
+ *
  * const server = createServer(lexicons);
  * server.method("com.example.ping", {
  *   handler: ({ params }) => ({
@@ -41,16 +41,16 @@
  *     body: { message: params.message }
  *   })
  * });
- * 
+ *
  * Deno.serve(server.app.fetch);
  * ```
- * 
+ *
  * @example Authentication with Basic Auth and JWT
  * ```ts
  * import { createBasicAuth, createServer } from "jsr:@sprk/xrpc-server";
- * 
+ *
  * const server = createServer(lexicons);
- * 
+ *
  * // Basic Auth
  * server.method("com.example.protected", {
  *   auth: createBasicAuth({ username: "admin", password: "secret" }),
@@ -59,7 +59,7 @@
  *     body: { user: auth?.credentials?.username }
  *   })
  * });
- * 
+ *
  * // JWT Auth
  * server.method("com.example.jwtProtected", {
  *   auth: async ({ req }) => {
@@ -74,11 +74,11 @@
  *   })
  * });
  * ```
- * 
+ *
  * @example Rate limiting configuration
  * ```ts
  * import { createServer } from "jsr:@sprk/xrpc-server";
- * 
+ *
  * const server = createServer(lexicons, {
  *   rateLimits: {
  *     creator: createRateLimiter,
@@ -94,7 +94,7 @@
  *     }]
  *   }
  * });
- * 
+ *
  * // Per-route rate limiting
  * server.method("com.example.limited", {
  *   rateLimit: {
@@ -107,13 +107,13 @@
  *   })
  * });
  * ```
- * 
+ *
  * @example Streaming endpoint
  * ```ts
  * import { createServer } from "jsr:@sprk/xrpc-server";
- * 
+ *
  * const server = createServer(lexicons);
- * 
+ *
  * server.streamMethod("com.example.stream", {
  *   handler: async function* ({ signal }) {
  *     while (!signal.aborted) {
@@ -123,7 +123,7 @@
  *   }
  * });
  * ```
- * 
+ *
  * @module
  */
 

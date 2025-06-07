@@ -9,7 +9,7 @@ export async function createServer(
   const portPromise = new Promise<number>((resolve) => {
     resolveServer = resolve;
   });
-  
+
   const httpServer = Deno.serve({
     signal: abortController.signal,
     port: 0,
@@ -31,7 +31,7 @@ export async function createServer(
     abortController: AbortController;
     port: number;
   };
-  
+
   (httpServer as ServerWithMetadata).abortController = abortController;
   const port = await portPromise;
   (httpServer as ServerWithMetadata).port = port;
@@ -43,7 +43,8 @@ export async function closeServer(httpServer: Deno.HttpServer) {
   type ServerWithAbortController = Deno.HttpServer & {
     abortController: AbortController;
   };
-  const abortController = (httpServer as ServerWithAbortController).abortController;
+  const abortController =
+    (httpServer as ServerWithAbortController).abortController;
   if (abortController) {
     abortController.abort();
     await httpServer.finished;
@@ -77,7 +78,9 @@ export function createBasicAuth(allowed: {
   };
 }
 
-export function createStreamBasicAuth({ username, password }: { username: string; password: string }) {
+export function createStreamBasicAuth(
+  { username, password }: { username: string; password: string },
+) {
   return (ctx: { req: { headers: Headers } }) => {
     const auth = ctx.req.headers.get("authorization");
     if (auth !== `Basic ${btoa(`${username}:${password}`)}`) {

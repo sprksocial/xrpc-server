@@ -13,13 +13,13 @@ const wait = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
 // Helper to create a test server
 function createTestServer(
-  handlerFn: () => AsyncGenerator<Frame, void, unknown>
+  handlerFn: () => AsyncGenerator<Frame, void, unknown>,
 ) {
   const server = new XrpcStreamServer({
     noServer: true,
     handler: handlerFn,
   });
-  
+
   const httpServer = Deno.serve({ port: 0 }, (req) => {
     if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
       const { socket, response } = Deno.upgradeWebSocket(req);
@@ -28,7 +28,7 @@ function createTestServer(
     }
     return new Response("Not Found", { status: 404 });
   });
-  
+
   const addr = httpServer.addr as Deno.NetAddr;
   return {
     server,
@@ -36,7 +36,7 @@ function createTestServer(
     close: () => {
       server.wss.close();
       httpServer.unref();
-    }
+    },
   };
 }
 

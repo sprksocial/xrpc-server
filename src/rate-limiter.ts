@@ -18,7 +18,7 @@ import { RateLimitExceededError } from "./types.ts";
 
 /**
  * Options for the rate limiter to customize its behavior.
- * 
+ *
  * @prop keyPrefix - The prefix for the rate limiter key.
  * @prop durationMs - The duration of the rate limiter in milliseconds.
  * @prop points - The number of points to consume.
@@ -43,11 +43,11 @@ export type RateLimiterOpts = {
  * The rate limiter uses the rate-limiter-flexible library
  * to limit the number of requests to the server based on the
  * options provided.
- * 
+ *
  * Uses a redis store by default.
- * 
+ *
  * Used in the server class.
- * 
+ *
  * @param limiter - The rate limiter instance.
  * @param opts - The options for the rate limiter.
  * @class
@@ -161,7 +161,7 @@ export class RateLimiter implements RateLimiterI {
 
 /**
  * Formats the rate limiter status into a simplified object.
- * 
+ *
  * @param limiter - The rate limiter instance.
  * @param res - The rate limiter response.
  * @returns The rate limiter status.

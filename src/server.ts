@@ -28,18 +28,18 @@ import {
   XRPCError,
 } from "./types.ts";
 import type {
+  AuthVerifier,
+  HandlerAuth,
+  HandlerPipeThrough,
+  HandlerSuccess,
+  Options,
+  Params,
+  RateLimiterI,
   XRPCHandler,
   XRPCHandlerConfig,
   XRPCReqContext,
   XRPCStreamHandler,
   XRPCStreamHandlerConfig,
-  RateLimiterI,
-  Options,
-  Params,
-  AuthVerifier,
-  HandlerAuth,
-  HandlerPipeThrough,
-  HandlerSuccess,
 } from "./types.ts";
 import {
   decodeQueryParams,
@@ -47,7 +47,7 @@ import {
   validateInput,
   validateOutput,
 } from "./util.ts";
-import type { Context, MiddlewareHandler, Next, Schema, Env } from "hono";
+import type { Context, Env, MiddlewareHandler, Next, Schema } from "hono";
 
 const REQUEST_LOCALS_KEY = "_xrpcLocals";
 
@@ -74,7 +74,7 @@ const REQUEST_LOCALS_KEY = "_xrpcLocals";
 export function createServer<
   E extends Env = Env,
   P extends string = string,
-  S extends Schema = Schema
+  S extends Schema = Schema,
 >(
   lexicons?: LexiconDoc[],
   options?: Options,
@@ -85,17 +85,20 @@ export function createServer<
 /**
  * The XRPC server class.
  * Contains the Hono app and routes.
- * Note: please ensure you are using the same version of Hono *from JSR* 
+ * Note: please ensure you are using the same version of Hono *from JSR*
  * as the one used in the project.
  */
 export class Server<
   E extends Env = Env,
   P extends string = string,
-  S extends Schema = Schema
+  S extends Schema = Schema,
 > {
   public app: Hono<E, S, P> = new Hono<E, S, P>();
   public routes: Hono<E, S, P> = new Hono<E, S, P>();
-  subscriptions: Map<string, XrpcStreamServer> = new Map<string, XrpcStreamServer>();
+  subscriptions: Map<string, XrpcStreamServer> = new Map<
+    string,
+    XrpcStreamServer
+  >();
   lex: Lexicons = new Lexicons();
   options: Options;
   middleware: Record<"json" | "text", { limit?: number }>;
@@ -289,7 +292,9 @@ export class Server<
                     transform = new DecompressionStream("deflate"); // Fallback for browsers that don't support brotli
                     break;
                   default:
-                    throw new InvalidRequestError("unsupported content-encoding");
+                    throw new InvalidRequestError(
+                      "unsupported content-encoding",
+                    );
                 }
 
                 const chunks: Uint8Array[] = [];
@@ -298,7 +303,7 @@ export class Server<
                     start(controller) {
                       controller.enqueue(currentBody);
                       controller.close();
-                    }
+                    },
                   });
 
                   const transformedStream = stream.pipeThrough(transform);
@@ -307,14 +312,18 @@ export class Server<
                   while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-                    
+
                     totalSize += value.length;
-                    if (routeOpts.blobLimit && totalSize > routeOpts.blobLimit) {
-                      throw new PayloadTooLargeError("request entity too large");
+                    if (
+                      routeOpts.blobLimit && totalSize > routeOpts.blobLimit
+                    ) {
+                      throw new PayloadTooLargeError(
+                        "request entity too large",
+                      );
                     }
                     chunks.push(value);
                   }
-                  
+
                   currentBody = new Uint8Array(totalSize);
                   let offset = 0;
                   for (const chunk of chunks) {
@@ -375,8 +384,9 @@ export class Server<
             resetRouteRateLimits: async () => {},
           },
           this.globalRateLimiters.map(
-            (rl) => (ctx: XRPCReqContext) => rl.consume(ctx)),
-          );
+            (rl) => (ctx: XRPCReqContext) => rl.consume(ctx),
+          ),
+        );
         if (rlRes instanceof RateLimitExceededError) {
           throw rlRes;
         }
@@ -504,7 +514,9 @@ export class Server<
           const headers = new Headers();
           setHeaders(headers, output);
 
-          if (output.encoding === "application/json" || output.encoding === "json") {
+          if (
+            output.encoding === "application/json" || output.encoding === "json"
+          ) {
             headers.set("Content-Type", "application/json; charset=utf-8");
             return new Response(JSON.stringify(lexToJson(output.body)), {
               status: 200,
@@ -516,10 +528,13 @@ export class Server<
               contentType = `${contentType}; charset=utf-8`;
             }
             headers.set("Content-Type", contentType);
-            return new Response(output.body as string | Uint8Array | ReadableStream<Uint8Array>, {
-              status: 200,
-              headers,
-            });
+            return new Response(
+              output.body as string | Uint8Array | ReadableStream<Uint8Array>,
+              {
+                status: 200,
+                headers,
+              },
+            );
           }
         }
       } catch (err: unknown) {
@@ -597,7 +612,7 @@ export class Server<
   }
 
   public enableStreamingOnListen(
-    handler: (req: Request) => Promise<Response>
+    handler: (req: Request) => Promise<Response>,
   ): (req: Request) => Response | Promise<Response> {
     return (req: Request) => {
       if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
@@ -605,18 +620,18 @@ export class Server<
         const sub = url.pathname.startsWith("/xrpc/")
           ? this.subscriptions.get(url.pathname.replace("/xrpc/", ""))
           : undefined;
-        
+
         if (!sub) return new Response("Not Found", { status: 404 });
 
         // Return a response that indicates WebSocket upgrade
         const headers = new Headers({
           "Upgrade": "websocket",
-          "Connection": "Upgrade"
+          "Connection": "Upgrade",
         });
-        
-        return new Response(null, { 
+
+        return new Response(null, {
           status: 101, // Switching Protocols
-          headers 
+          headers,
         });
       }
       return handler(req);
@@ -685,7 +700,7 @@ export class Server<
 
   public router(): Hono {
     const router = new Hono();
-    router.route('/', this.routes);
+    router.route("/", this.routes);
     return router;
   }
 }
@@ -745,7 +760,9 @@ function createErrorMiddleware({
 
     logger.error(
       {
-        err: isInternalError || isDevelopment ? err : toSimplifiedErrorLike(err),
+        err: isInternalError || isDevelopment
+          ? err
+          : toSimplifiedErrorLike(err),
         nsid: locals?.nsid,
         type: xrpcError.type,
         status: xrpcError.statusCode,

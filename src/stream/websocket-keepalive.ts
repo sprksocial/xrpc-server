@@ -74,7 +74,7 @@ export class WebSocketKeepAlive {
           if (messageQueue.length > 0) {
             yield messageQueue.shift()!;
           } else {
-            await new Promise(resolve => setTimeout(resolve, 0));
+            await new Promise((resolve) => setTimeout(resolve, 0));
           }
         }
 

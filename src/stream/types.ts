@@ -45,7 +45,10 @@ export const errorFrameBody = z.object({
 
 export type FrameHeader = MessageFrameHeader | ErrorFrameHeader;
 
-export const frameHeader = z.union([messageFrameHeader, errorFrameHeader]) as z.ZodType<FrameHeader>;
+export const frameHeader = z.union([
+  messageFrameHeader,
+  errorFrameHeader,
+]) as z.ZodType<FrameHeader>;
 
 export class DisconnectError extends Error {
   constructor(

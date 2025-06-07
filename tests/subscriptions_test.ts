@@ -248,9 +248,10 @@ Deno.test({
       await Deno.test("does not websocket upgrade at bad endpoint", async () => {
         const ws = new WebSocket(`ws://${addr}/xrpc/does.not.exist`);
         await assertRejects(
-          () => new Promise((_, reject) => {
-            ws.onerror = () => reject(new Error("ECONNRESET"));
-          }),
+          () =>
+            new Promise((_, reject) => {
+              ws.onerror = () => reject(new Error("ECONNRESET"));
+            }),
           Error,
           "ECONNRESET",
         );
@@ -376,7 +377,10 @@ Deno.test({
           async () => {
             // Run a server that pauses longer than heartbeat interval on first connection
             const localPort = await getPort();
-            const server = Deno.serve({ port: localPort }, () => new Response());
+            const server = Deno.serve(
+              { port: localPort },
+              () => new Response(),
+            );
             const firstWasClosed = false;
             const firstSocketClosed = new Promise<void>((resolve) => {
               // TODO: Implement WebSocket server handling in Deno

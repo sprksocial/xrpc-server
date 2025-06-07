@@ -1,6 +1,15 @@
-import type { Lexicons, LexXrpcProcedure, LexXrpcQuery, LexXrpcSubscription } from "@atproto/lexicon";
+import type {
+  Lexicons,
+  LexXrpcProcedure,
+  LexXrpcQuery,
+  LexXrpcSubscription,
+} from "@atproto/lexicon";
 import { jsonToLex } from "@atproto/lexicon";
-import { handlerSuccess, InternalServerError, InvalidRequestError } from "./types.ts";
+import {
+  handlerSuccess,
+  InternalServerError,
+  InvalidRequestError,
+} from "./types.ts";
 import type {
   HandlerInput,
   HandlerSuccess,
@@ -16,7 +25,7 @@ type ReadableStreamLike = Pick<ReadableStream, "getReader" | "pipeTo" | "tee">;
 
 function assert(condition: unknown, message?: string): asserts condition {
   if (!condition) {
-    throw new Error(message || 'Assertion failed');
+    throw new Error(message || "Assertion failed");
   }
 }
 

@@ -356,7 +356,7 @@ async function createPrivateKeyObject(
   const pemKey = `-----BEGIN EC PRIVATE KEY-----\n${
     encodeBase64(raw)
   }\n-----END EC PRIVATE KEY-----`;
-  
+
   // Convert PEM to CryptoKey
   const binaryDer = new TextEncoder().encode(pemKey);
   return await crypto.subtle.importKey(
@@ -367,6 +367,6 @@ async function createPrivateKeyObject(
       namedCurve: "P-256",
     },
     true,
-    ["sign"]
+    ["sign"],
   );
 }

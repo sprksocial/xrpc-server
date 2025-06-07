@@ -15,7 +15,7 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: vx.x.x
-          
+
       - name: Run tests
         run: deno test -A
   publish:

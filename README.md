@@ -1,7 +1,11 @@
 [![JSR](https://jsr.io/badges/@sprk/xrpc-server)](https://jsr.io/@sprk/xrpc-server)
+
 # xrpc-server: atproto HTTP API server library
 
-A TypeScript library for implementing [atproto](https://atproto.com) HTTP API services, with Lexicon schema validation. This is a port of the original [@atproto/xrpc-server](https://www.npmjs.com/package/@atproto/xrpc-server) package to use Hono and Deno.
+A TypeScript library for implementing [atproto](https://atproto.com) HTTP API
+services, with Lexicon schema validation. This is a port of the original
+[@atproto/xrpc-server](https://www.npmjs.com/package/@atproto/xrpc-server)
+package to use Hono and Deno.
 
 ## Features
 
@@ -57,7 +61,8 @@ Deno.serve({ port }, server.app.fetch);
 
 ## Authentication
 
-The library supports various authentication methods including Basic Auth and JWT:
+The library supports various authentication methods including Basic Auth and
+JWT:
 
 ```typescript
 server.method("io.example.authTest", {
