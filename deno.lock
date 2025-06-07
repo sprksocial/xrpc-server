@@ -4,6 +4,7 @@
     "jsr:@hono/hono@^4.7.10": "4.7.11",
     "jsr:@std/assert@*": "1.0.13",
     "jsr:@std/encoding@*": "1.0.10",
+    "jsr:@std/encoding@^1.0.10": "1.0.10",
     "jsr:@std/internal@^1.0.6": "1.0.8",
     "npm:@atproto/common@~0.4.11": "0.4.11",
     "npm:@atproto/crypto@~0.4.4": "0.4.4",
@@ -468,6 +469,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@hono/hono@^4.7.10",
+      "jsr:@std/encoding@^1.0.10",
       "npm:@atproto/common@~0.4.11",
       "npm:@atproto/crypto@~0.4.4",
       "npm:@atproto/lexicon@~0.4.11",

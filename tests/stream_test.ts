@@ -1,7 +1,3 @@
-import { once } from "node:events";
-import * as http from "node:http";
-import type { AddressInfo } from "node:net";
-import { WebSocket } from "ws";
 import { XRPCError } from "@atproto/xrpc";
 import {
   byFrame,
@@ -15,28 +11,50 @@ import { assertEquals, assertInstanceOf } from "jsr:@std/assert";
 
 const wait = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
+// Helper to create a test server
+function createTestServer(
+  handlerFn: () => AsyncGenerator<Frame, void, unknown>
+) {
+  const server = new XrpcStreamServer({
+    noServer: true,
+    handler: handlerFn,
+  });
+  
+  const httpServer = Deno.serve({ port: 0 }, (req) => {
+    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      const { socket, response } = Deno.upgradeWebSocket(req);
+      server.wss.emit("connection", socket, req);
+      return response;
+    }
+    return new Response("Not Found", { status: 404 });
+  });
+  
+  const addr = httpServer.addr as Deno.NetAddr;
+  return {
+    server,
+    url: `ws://localhost:${addr.port}`,
+    close: () => {
+      server.wss.close();
+      httpServer.unref();
+    }
+  };
+}
+
 Deno.test({
   name: "Stream Tests",
   async fn() {
     await Deno.test("streams message and info frames", async () => {
-      const httpServer = http.createServer();
-      const server = new XrpcStreamServer({
-        server: httpServer,
-        handler: async function* () {
-          await wait(1);
-          yield new MessageFrame(1);
-          await wait(1);
-          yield new MessageFrame(2);
-          await wait(1);
-          yield new MessageFrame(3);
-          return;
-        },
+      const { url, close } = createTestServer(async function* () {
+        await wait(1);
+        yield new MessageFrame(1);
+        await wait(1);
+        yield new MessageFrame(2);
+        await wait(1);
+        yield new MessageFrame(3);
+        return;
       });
 
-      await once(httpServer.listen(), "listening");
-      const { port } = server.wss.address() as AddressInfo;
-
-      const ws = new WebSocket(`ws://localhost:${port}`);
+      const ws = new WebSocket(url);
       const frames: Frame[] = [];
       for await (const frame of byFrame(ws)) {
         frames.push(frame);
@@ -48,32 +66,25 @@ Deno.test({
         new MessageFrame(3),
       ]);
 
-      httpServer.close();
+      close();
     });
 
     await Deno.test("kills handler and closes on error frame", async () => {
       let proceededAfterError = false;
-      const httpServer = http.createServer();
-      const server = new XrpcStreamServer({
-        server: httpServer,
-        handler: async function* () {
-          await wait(1);
-          yield new MessageFrame(1);
-          await wait(1);
-          yield new MessageFrame(2);
-          await wait(1);
-          yield new ErrorFrame({ error: "BadOops" });
-          proceededAfterError = true;
-          await wait(1);
-          yield new MessageFrame(3);
-          return;
-        },
+      const { url, close } = createTestServer(async function* () {
+        await wait(1);
+        yield new MessageFrame(1);
+        await wait(1);
+        yield new MessageFrame(2);
+        await wait(1);
+        yield new ErrorFrame({ error: "BadOops" });
+        proceededAfterError = true;
+        await wait(1);
+        yield new MessageFrame(3);
+        return;
       });
 
-      await once(httpServer.listen(), "listening");
-      const { port } = server.wss.address() as AddressInfo;
-
-      const ws = new WebSocket(`ws://localhost:${port}`);
+      const ws = new WebSocket(url);
       const frames: Frame[] = [];
       for await (const frame of byFrame(ws)) {
         frames.push(frame);
@@ -88,30 +99,23 @@ Deno.test({
         new ErrorFrame({ error: "BadOops" }),
       ]);
 
-      httpServer.close();
+      close();
     });
 
     await Deno.test("kills handler and closes client disconnect", async () => {
-      const httpServer = http.createServer();
       let i = 1;
-      const server = new XrpcStreamServer({
-        server: httpServer,
-        handler: async function* () {
-          while (true) {
-            await wait(0);
-            yield new MessageFrame(i++);
-          }
-        },
+      const { url, close } = createTestServer(async function* () {
+        while (true) {
+          await wait(0);
+          yield new MessageFrame(i++);
+        }
       });
 
-      await once(httpServer.listen(), "listening");
-      const { port } = server.wss.address() as AddressInfo;
-
-      const ws = new WebSocket(`ws://localhost:${port}`);
+      const ws = new WebSocket(url);
       const frames: Frame[] = [];
       for await (const frame of byFrame(ws)) {
         frames.push(frame);
-        if (frame.body === 3) ws.terminate();
+        if (frame.body === 3) ws.close();
       }
 
       // Grace period to let close take place on the server
@@ -121,35 +125,29 @@ Deno.test({
       await wait(5);
       assertEquals(i, currentCount);
 
-      httpServer.close();
+      close();
     });
 
     await Deno.test("byMessage() tests", async (t) => {
       await t.step(
         "kills handler and closes client disconnect on error frame",
         async () => {
-          const httpServer = http.createServer();
-          const server = new XrpcStreamServer({
-            server: httpServer,
-            handler: async function* () {
-              await wait(1);
-              yield new MessageFrame(1);
-              await wait(1);
-              yield new MessageFrame(2);
-              await wait(1);
-              yield new ErrorFrame({
-                error: "BadOops",
-                message: "That was a bad one",
-              });
-              await wait(1);
-              yield new MessageFrame(3);
-              return;
-            },
+          const { url, close } = createTestServer(async function* () {
+            await wait(1);
+            yield new MessageFrame(1);
+            await wait(1);
+            yield new MessageFrame(2);
+            await wait(1);
+            yield new ErrorFrame({
+              error: "BadOops",
+              message: "That was a bad one",
+            });
+            await wait(1);
+            yield new MessageFrame(3);
+            return;
           });
-          await once(httpServer.listen(), "listening");
-          const { port } = server.wss.address() as AddressInfo;
 
-          const ws = new WebSocket(`ws://localhost:${port}`);
+          const ws = new WebSocket(url);
           const frames: Frame[] = [];
 
           let error: unknown;
@@ -161,7 +159,7 @@ Deno.test({
             error = err;
           }
 
-          assertEquals(ws.readyState, ws.CLOSING);
+          assertEquals(ws.readyState, WebSocket.CLOSING);
           assertEquals(frames, [new MessageFrame(1), new MessageFrame(2)]);
           assertInstanceOf(error, XRPCError);
           if (error instanceof XRPCError) {
@@ -169,7 +167,7 @@ Deno.test({
             assertEquals(error.message, "That was a bad one");
           }
 
-          httpServer.close();
+          close();
         },
       );
     });

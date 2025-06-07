@@ -1,9 +1,6 @@
-import type { IncomingMessage } from "node:http";
-import { Readable } from "node:stream";
 import type { Context, Next, HonoRequest } from "hono";
 import { isHttpError } from "http-errors";
 import { z } from "zod";
-import { Buffer } from "node:buffer";
 import {
   httpResponseCodeToName,
   httpResponseCodeToString,
@@ -123,27 +120,27 @@ export const handlerSuccess = z.object({
   headers: headersSchema.optional(),
 }).strict() as z.ZodType<HandlerSuccess>;
 
-export type HandlerPipeThroughBuffer = {
-  encoding: string;
-  buffer: Buffer;
-  headers?: Record<string, string>;
-};
-
-export const handlerPipeThroughBuffer: z.ZodType<HandlerPipeThroughBuffer> = z.object({
-  encoding: z.string(),
-  buffer: z.instanceof(Buffer),
-  headers: headersSchema.optional(),
-});
-
 export type HandlerPipeThroughStream = {
   encoding: string;
-  stream: Readable;
+  stream: ReadableStream<Uint8Array>;
   headers?: Record<string, string>;
 };
 
 export const handlerPipeThroughStream: z.ZodType<HandlerPipeThroughStream> = z.object({
   encoding: z.string(),
-  stream: z.instanceof(Readable),
+  stream: z.custom<ReadableStream<Uint8Array>>((val) => val instanceof ReadableStream),
+  headers: headersSchema.optional(),
+});
+
+export type HandlerPipeThroughBuffer = {
+  encoding: string;
+  buffer: Uint8Array;
+  headers?: Record<string, string>;
+};
+
+export const handlerPipeThroughBuffer: z.ZodType<HandlerPipeThroughBuffer> = z.object({
+  encoding: z.string(),
+  buffer: z.custom<Uint8Array>((val) => val instanceof Uint8Array),
   headers: headersSchema.optional(),
 });
 
@@ -178,7 +175,7 @@ export type XRPCReqContext = {
 };
 
 export type XRPCStreamReqContext = {
-  req: IncomingMessage;
+  req: Request;
   params: Params;
   auth: HandlerAuth | undefined;
   signal: AbortSignal;
@@ -191,7 +188,7 @@ export type XRPCHandler = (
 export type XRPCStreamHandler = (ctx: {
   auth: HandlerAuth | undefined;
   params: Params;
-  req: IncomingMessage;
+  req: Request;
   signal: AbortSignal;
 }) => AsyncIterable<unknown>;
 
@@ -208,7 +205,7 @@ export interface AuthVerifier {
 }
 
 export type StreamAuthVerifierContext = {
-  req: IncomingMessage;
+  req: Request;
 };
 
 export type StreamAuthVerifier = (

@@ -1,5 +1,5 @@
 import { CID } from "multiformats/cid";
-import { LexiconDoc } from "@atproto/lexicon";
+import type { LexiconDoc } from "@atproto/lexicon";
 import { XrpcClient } from "@atproto/xrpc";
 import * as xrpcServer from "../mod.ts";
 import { closeServer, createServer } from "./_util.ts";
@@ -75,7 +75,7 @@ Deno.test({
     );
 
     // Setup server and client
-    const port = (s as any).port;
+    const port = (s as Deno.HttpServer & { port: number }).port;
     const client = new XrpcClient(`http://localhost:${port}`, LEXICONS);
 
     try {

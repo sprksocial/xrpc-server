@@ -5,6 +5,11 @@ export enum FrameType {
   Error = -1,
 }
 
+export interface WebSocketOptions {
+  headers?: Record<string, string>;
+  protocols?: string[];
+}
+
 export type MessageFrameHeader = {
   op: FrameType.Message;
   t?: string;

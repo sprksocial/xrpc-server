@@ -8,6 +8,7 @@
     "@atproto/crypto": "npm:@atproto/crypto@^0.4.4",
     "@atproto/lexicon": "npm:@atproto/lexicon@^0.4.11",
     "@atproto/xrpc": "npm:@atproto/xrpc@^0.7.0",
+    "@std/encoding": "jsr:@std/encoding@^1.0.10",
     "cbor-x": "npm:cbor-x@^1.6.0",
     "get-port": "npm:get-port@^7.1.0",
     "hono": "jsr:@hono/hono@^4.7.10",

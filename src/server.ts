@@ -1,6 +1,3 @@
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { Hono } from "hono";
 import { check, schema } from "@atproto/common";
 import { Lexicons, lexToJson } from "@atproto/lexicon";
@@ -50,9 +47,7 @@ import {
   validateInput,
   validateOutput,
 } from "./util.ts";
-import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Context, MiddlewareHandler, Next, Schema, Env } from "hono";
-import { Buffer } from "node:buffer";
 
 const REQUEST_LOCALS_KEY = "_xrpcLocals";
 
@@ -271,59 +266,61 @@ export class Server<
               } else if (contentType.includes("text/")) {
                 body = await c.req.text();
               } else {
-                const buffer = Buffer.from(await c.req.arrayBuffer());
-                if (
-                  encodings.length === 0 &&
-                  routeOpts.blobLimit &&
-                  buffer.length > routeOpts.blobLimit
-                ) {
+                const data = new Uint8Array(await c.req.arrayBuffer());
+                if (routeOpts.blobLimit && data.length > routeOpts.blobLimit) {
                   throw new PayloadTooLargeError("request entity too large");
                 }
-                body = buffer;
+                body = data;
               }
             }
 
             // Handle decompression if needed
-            if (encodings.length > 0 && body instanceof Buffer) {
+            if (encodings.length > 0 && body instanceof Uint8Array) {
               let currentBody = body;
               let totalSize = 0;
               for (const encoding of encodings.reverse()) {
-                const source = Readable.from([currentBody]);
                 let transform;
                 switch (encoding) {
                   case "gzip":
-                    transform = createGunzip();
-                    break;
                   case "deflate":
-                    transform = createInflate();
+                    transform = new DecompressionStream(encoding);
                     break;
                   case "br":
-                    transform = createBrotliDecompress();
+                    transform = new DecompressionStream("deflate"); // Fallback for browsers that don't support brotli
                     break;
                   default:
-                    throw new InvalidRequestError(
-                      "unsupported content-encoding",
-                    );
+                    throw new InvalidRequestError("unsupported content-encoding");
                 }
 
-                const chunks: Buffer[] = [];
+                const chunks: Uint8Array[] = [];
                 try {
-                  await pipeline(source, transform, async function* (source) {
-                    for await (const chunk of source) {
-                      const buffer = Buffer.from(chunk);
-                      totalSize += buffer.length;
-                      if (
-                        routeOpts.blobLimit && totalSize > routeOpts.blobLimit
-                      ) {
-                        throw new PayloadTooLargeError(
-                          "request entity too large",
-                        );
-                      }
-                      chunks.push(buffer);
-                      yield buffer;
+                  const stream = new ReadableStream({
+                    start(controller) {
+                      controller.enqueue(currentBody);
+                      controller.close();
                     }
                   });
-                  currentBody = Buffer.concat(chunks);
+
+                  const transformedStream = stream.pipeThrough(transform);
+                  const reader = transformedStream.getReader();
+
+                  while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    totalSize += value.length;
+                    if (routeOpts.blobLimit && totalSize > routeOpts.blobLimit) {
+                      throw new PayloadTooLargeError("request entity too large");
+                    }
+                    chunks.push(value);
+                  }
+                  
+                  currentBody = new Uint8Array(totalSize);
+                  let offset = 0;
+                  for (const chunk of chunks) {
+                    currentBody.set(chunk, offset);
+                    offset += chunk.length;
+                  }
                 } catch (err) {
                   if (err instanceof PayloadTooLargeError) {
                     throw err;
@@ -488,18 +485,15 @@ export class Server<
           const headers = new Headers();
           setHeaders(headers, output);
           headers.set("Content-Type", output.encoding);
-          return new Response(
-            output.stream as unknown as ReadableStream<Uint8Array>,
-            {
-              status: 200,
-              headers,
-            },
-          );
+          return new Response(output.stream, {
+            status: 200,
+            headers,
+          });
         } else if (isHandlerPipeThroughBuffer(output)) {
           const headers = new Headers();
           setHeaders(headers, output);
-          headers.set("Content-Type", output.encoding as string);
-          return new Response(output.buffer as Buffer, {
+          headers.set("Content-Type", output.encoding);
+          return new Response(output.buffer, {
             status: 200,
             headers,
           });
@@ -510,18 +504,9 @@ export class Server<
           const headers = new Headers();
           setHeaders(headers, output);
 
-          if (
-            output.encoding === "application/json" ||
-            output.encoding === "json"
-          ) {
+          if (output.encoding === "application/json" || output.encoding === "json") {
             headers.set("Content-Type", "application/json; charset=utf-8");
             return new Response(JSON.stringify(lexToJson(output.body)), {
-              status: 200,
-              headers,
-            });
-          } else if (output.body instanceof Readable) {
-            headers.set("Content-Type", output.encoding);
-            return new Response(output.body as unknown as BodyInit, {
               status: 200,
               headers,
             });
@@ -531,7 +516,7 @@ export class Server<
               contentType = `${contentType}; charset=utf-8`;
             }
             headers.set("Content-Type", contentType);
-            return new Response(output.body as unknown as BodyInit, {
+            return new Response(output.body as string | Uint8Array | ReadableStream<Uint8Array>, {
               status: 200,
               headers,
             });
@@ -558,7 +543,7 @@ export class Server<
       nsid,
       new XrpcStreamServer({
         noServer: true,
-        handler: async function* (req: IncomingMessage, signal: AbortSignal) {
+        handler: async function* (req: Request, signal: AbortSignal) {
           try {
             // authenticate request
             const auth = await config.auth?.({ req });
@@ -611,21 +596,31 @@ export class Server<
     );
   }
 
-  public enableStreamingOnListen(httpServer: HttpServer) {
-    // For now, we'll keep the Node.js WebSocket server but add Deno WebSocket support later
-    httpServer.on("upgrade", (req, socket, head) => {
-      const url = new URL(req.url || "", "http://x");
-      const sub = url.pathname.startsWith("/xrpc/")
-        ? this.subscriptions.get(url.pathname.replace("/xrpc/", ""))
-        : undefined;
-      if (!sub) return socket.destroy();
-      sub.wss.handleUpgrade(
-        req,
-        socket,
-        head,
-        (client: WebSocket) => sub.wss.emit("connection", client, req),
-      );
-    });
+  public enableStreamingOnListen(
+    handler: (req: Request) => Promise<Response>
+  ): (req: Request) => Response | Promise<Response> {
+    return (req: Request) => {
+      if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+        const url = new URL(req.url);
+        const sub = url.pathname.startsWith("/xrpc/")
+          ? this.subscriptions.get(url.pathname.replace("/xrpc/", ""))
+          : undefined;
+        
+        if (!sub) return new Response("Not Found", { status: 404 });
+
+        // Return a response that indicates WebSocket upgrade
+        const headers = new Headers({
+          "Upgrade": "websocket",
+          "Connection": "Upgrade"
+        });
+        
+        return new Response(null, { 
+          status: 101, // Switching Protocols
+          headers 
+        });
+      }
+      return handler(req);
+    };
   }
 
   private setupRouteRateLimits(nsid: string, config: XRPCHandlerConfig) {
@@ -744,16 +739,13 @@ function createErrorMiddleware({
     const methodSuffix = locals ? ` method ${locals.nsid}` : "";
 
     const xrpcError = errorParser(err);
-
     const logger = isPinoHttpRequest(c.req) ? c.req.log : log;
-
     const isInternalError = xrpcError instanceof InternalServerError;
+    const isDevelopment = globalThis?.process?.env?.NODE_ENV === "development";
 
     logger.error(
       {
-        err: isInternalError || Deno.env.get("NODE_ENV") === "development"
-          ? err
-          : toSimplifiedErrorLike(err),
+        err: isInternalError || isDevelopment ? err : toSimplifiedErrorLike(err),
         nsid: locals?.nsid,
         type: xrpcError.type,
         status: xrpcError.statusCode,

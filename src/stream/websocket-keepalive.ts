@@ -1,7 +1,5 @@
-import { ClientOptions, WebSocket } from "ws";
 import { SECOND, wait } from "@atproto/common";
-import { streamByteChunks } from "./stream.ts";
-import { CloseCode, DisconnectError } from "./types.ts";
+import { CloseCode, DisconnectError, type WebSocketOptions } from "./types.ts";
 
 export class WebSocketKeepAlive {
   public ws: WebSocket | null = null;
@@ -9,7 +7,7 @@ export class WebSocketKeepAlive {
   public reconnects: number | null = null;
 
   constructor(
-    public opts: ClientOptions & {
+    public opts: WebSocketOptions & {
       getUrl: () => Promise<string>;
       maxReconnectSeconds?: number;
       signal?: AbortSignal;
@@ -32,32 +30,56 @@ export class WebSocketKeepAlive {
         await wait(duration);
       }
       const url = await this.opts.getUrl();
-      this.ws = new WebSocket(url, this.opts);
+      this.ws = new WebSocket(url, this.opts.protocols);
       const ac = new AbortController();
       if (this.opts.signal) {
         forwardSignal(this.opts.signal, ac);
       }
-      this.ws.once("open", () => {
+      this.ws.onopen = () => {
         this.initialSetup = false;
         this.reconnects = 0;
         if (this.ws) {
           this.startHeartbeat(this.ws);
         }
-      });
-      this.ws.once("close", (code: number, reason: string) => {
-        if (code === CloseCode.Abnormal) {
+      };
+      this.ws.onclose = (ev: CloseEvent) => {
+        if (ev.code === CloseCode.Abnormal) {
           // Forward into an error to distinguish from a clean close
           ac.abort(
-            new AbnormalCloseError(`Abnormal ws close: ${reason.toString()}`),
+            new AbnormalCloseError(`Abnormal ws close: ${ev.reason}`),
           );
         }
-      });
+      };
 
       try {
-        const wsStream = streamByteChunks(this.ws, { signal: ac.signal });
-        for await (const chunk of wsStream) {
-          yield chunk;
+        const messageQueue: Uint8Array[] = [];
+        let error: Error | null = null;
+        let done = false;
+
+        this.ws.onmessage = (ev: MessageEvent) => {
+          if (ev.data instanceof Uint8Array) {
+            messageQueue.push(ev.data);
+          }
+        };
+        this.ws.onerror = (ev: Event | ErrorEvent) => {
+          if (ev instanceof ErrorEvent) {
+            error = ev.error;
+          }
+        };
+        this.ws.onclose = () => {
+          done = true;
+        };
+
+        while (!done && !error && !ac.signal.aborted) {
+          if (messageQueue.length > 0) {
+            yield messageQueue.shift()!;
+          } else {
+            await new Promise(resolve => setTimeout(resolve, 0));
+          }
         }
+
+        if (error) throw error;
+        if (ac.signal.aborted) throw ac.signal.reason;
       } catch (_err) {
         const err = isErrorWithCode(_err) && _err.code === "ABORT_ERR"
           ? _err.cause
@@ -86,10 +108,10 @@ export class WebSocketKeepAlive {
 
     const checkAlive = () => {
       if (!isAlive) {
-        return ws.terminate();
+        return ws.close();
       }
       isAlive = false; // expect websocket to no longer be alive unless we receive a "pong" within the interval
-      ws.ping();
+      ws.send("ping");
     };
 
     checkAlive();
@@ -98,15 +120,17 @@ export class WebSocketKeepAlive {
       this.opts.heartbeatIntervalMs ?? 10 * SECOND,
     );
 
-    ws.on("pong", () => {
-      isAlive = true;
-    });
-    ws.once("close", () => {
+    ws.onmessage = (ev: MessageEvent) => {
+      if (ev.data === "pong") {
+        isAlive = true;
+      }
+    };
+    ws.onclose = () => {
       if (heartbeatInterval) {
         clearInterval(heartbeatInterval);
         heartbeatInterval = null;
       }
-    });
+    };
   }
 }
 

@@ -1,13 +1,5 @@
-import assert from "node:assert";
-import type { IncomingMessage, IncomingHttpHeaders } from "node:http";
-import type { Duplex, Readable } from "node:stream";
+import type { Lexicons, LexXrpcProcedure, LexXrpcQuery, LexXrpcSubscription } from "@atproto/lexicon";
 import { jsonToLex } from "@atproto/lexicon";
-import type {
-  Lexicons,
-  LexXrpcProcedure,
-  LexXrpcQuery,
-  LexXrpcSubscription,
-} from "@atproto/lexicon";
 import { handlerSuccess, InternalServerError, InvalidRequestError } from "./types.ts";
 import type {
   HandlerInput,
@@ -15,13 +7,18 @@ import type {
   Params,
   UndecodedParams,
 } from "./types.ts";
-import { Buffer } from "node:buffer";
 import type { HonoRequest } from "hono";
 
-// Add type at the top
-type StreamDestination = Duplex | NodeJS.WritableStream;
+// Web-standard stream types
+type StreamDestination = WritableStream;
 type StreamListener = (...args: unknown[]) => void;
-type ReadableStreamLike = Pick<Readable, "pipe" | "on" | "removeListener">;
+type ReadableStreamLike = Pick<ReadableStream, "getReader" | "pipeTo" | "tee">;
+
+function assert(condition: unknown, message?: string): asserts condition {
+  if (!condition) {
+    throw new Error(message || 'Assertion failed');
+  }
+}
 
 export function decodeQueryParams(
   def: LexXrpcProcedure | LexXrpcQuery | LexXrpcSubscription,
@@ -77,21 +74,13 @@ export function getQueryParams(url = ""): Record<string, string[]> {
 }
 
 // Update RequestLike interface
-export type RequestLike =
-  & {
-    headers: { [key: string]: string | string[] | undefined };
-    body?: unknown;
-    readableEnded?: boolean;
-    method?: string;
-    url?: string;
-  }
-  & Partial<ReadableStreamLike>
-  & {
-    destroy?: () => void;
-    resume?: () => void;
-    pause?: () => void;
-    unpipe?: (destination?: StreamDestination) => void;
-  };
+export type RequestLike = {
+  headers: Headers | { [key: string]: string | string[] | undefined };
+  body?: ReadableStream | unknown;
+  method?: string;
+  url?: string;
+  signal?: AbortSignal;
+};
 
 export async function validateInput(
   nsid: string,
@@ -100,7 +89,7 @@ export async function validateInput(
   contentType: string | undefined | null,
   lexicons: Lexicons,
 ): Promise<HandlerInput | undefined> {
-  let processedBody = body;
+  let processedBody: unknown | Uint8Array = body;
   if (body instanceof ReadableStream) {
     const reader = body.getReader();
     const chunks: Uint8Array[] = [];
@@ -109,7 +98,14 @@ export async function validateInput(
       if (done) break;
       chunks.push(value);
     }
-    processedBody = Buffer.concat(chunks);
+    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+    const tempBody = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      tempBody.set(chunk, offset);
+      offset += chunk.length;
+    }
+    processedBody = tempBody;
   }
 
   const bodyPresence = getBodyPresence(processedBody, contentType);
@@ -234,9 +230,6 @@ function getBodyPresence(
   if (typeof body === "string" && body.length === 0 && !contentType) {
     return "missing";
   }
-  if (Buffer.isBuffer(body) && body.length === 0 && !contentType) {
-    return "missing";
-  }
   if (body instanceof Uint8Array && body.length === 0 && !contentType) {
     return "missing";
   }
@@ -281,12 +274,11 @@ export interface ServerTiming {
 export interface MinimalRequest {
   url?: string;
   method?: string;
-  header?: (name: string) => string | undefined;
-  headers?: IncomingHttpHeaders;
+  headers: Headers | { [key: string]: string | string[] | undefined };
 }
 
 export const parseReqNsid = (
-  req: MinimalRequest | IncomingMessage | HonoRequest,
+  req: MinimalRequest | HonoRequest,
 ): string => parseUrlNsid(req.url || "/");
 
 /**

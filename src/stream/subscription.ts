@@ -1,6 +1,7 @@
-import { ClientOptions } from "ws";
 import { ensureChunkIsMessage } from "./stream.ts";
 import { WebSocketKeepAlive } from "./websocket-keepalive.ts";
+import { Frame } from "./frames.ts";
+import type { WebSocketOptions } from "./types.ts";
 
 interface MessageBody {
   $type?: string;
@@ -9,7 +10,7 @@ interface MessageBody {
 
 export class Subscription<T = unknown> {
   constructor(
-    public opts: ClientOptions & {
+    public opts: WebSocketOptions & {
       service: string;
       method: string;
       maxReconnectSeconds?: number;
@@ -38,7 +39,8 @@ export class Subscription<T = unknown> {
       },
     });
     for await (const chunk of ws) {
-      const message = await ensureChunkIsMessage(chunk);
+      const frame = Frame.fromBytes(chunk);
+      const message = ensureChunkIsMessage(frame);
       const t = message.header.t;
       const clone = message.body !== undefined
         ? { ...message.body } as MessageBody

@@ -77,28 +77,16 @@ export function createBasicAuth(allowed: {
   };
 }
 
-export function createStreamBasicAuth(allowed: {
-  username: string;
-  password: string;
-}) {
-  const verifyAuth = (header?: string) => {
-    if (!header || !header.startsWith("Basic ")) {
-      throw new AuthRequiredError();
-    }
-    const original = header.replace("Basic ", "");
-    const decoded = atob(original);
-    const [username, password] = decoded.split(":");
-    if (username !== allowed.username || password !== allowed.password) {
+export function createStreamBasicAuth({ username, password }: { username: string; password: string }) {
+  return (ctx: { req: { headers: Headers } }) => {
+    const auth = ctx.req.headers.get("authorization");
+    if (auth !== `Basic ${btoa(`${username}:${password}`)}`) {
       throw new AuthRequiredError();
     }
     return {
       credentials: { username },
-      artifacts: { original },
+      artifacts: { original: btoa(`${username}:${password}`) },
     };
-  };
-
-  return function (ctx: { req: { headers: { authorization?: string } } }) {
-    return verifyAuth(ctx.req.headers.authorization);
   };
 }
 

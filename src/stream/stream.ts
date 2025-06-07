@@ -1,43 +1,48 @@
-import type { DuplexOptions } from "node:stream";
-import type { WebSocket, WebSocketStream } from "ws";
-import { createWebSocketStream } from "ws";
 import { ResponseType, XRPCError } from "@atproto/xrpc";
 import { Frame } from "./frames.ts";
 import type { MessageFrame } from "./frames.ts";
 
-export function streamByteChunks(
-  ws: WebSocket,
-  options?: DuplexOptions,
-): WebSocketStream {
-  return createWebSocketStream(ws, {
-    ...options,
-    readableObjectMode: true, // Ensures frame bytes don't get buffered/combined together
-  });
-}
-
 export async function* byFrame(
   ws: WebSocket,
-  options?: DuplexOptions,
 ): AsyncGenerator<Frame> {
-  const wsStream = streamByteChunks(ws, options);
-  for await (const chunk of wsStream) {
-    yield Frame.fromBytes(chunk);
+  const messageQueue: Frame[] = [];
+  let error: Error | null = null;
+  let done = false;
+
+  ws.onmessage = (ev) => {
+    if (ev.data instanceof Uint8Array) {
+      messageQueue.push(Frame.fromBytes(ev.data));
+    }
+  };
+  ws.onerror = (ev) => {
+    if (ev instanceof ErrorEvent) {
+      error = ev.error;
+    }
+  };
+  ws.onclose = () => {
+    done = true;
+  };
+
+  while (!done && !error) {
+    if (messageQueue.length > 0) {
+      yield messageQueue.shift()!;
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
   }
+
+  if (error) throw error;
 }
 
 export async function* byMessage(
   ws: WebSocket,
-  options?: DuplexOptions,
 ): AsyncGenerator<MessageFrame<unknown>> {
-  const wsStream = streamByteChunks(ws, options);
-  for await (const chunk of wsStream) {
-    const msg = ensureChunkIsMessage(chunk);
-    yield msg;
+  for await (const frame of byFrame(ws)) {
+    yield ensureChunkIsMessage(frame);
   }
 }
 
-export function ensureChunkIsMessage(chunk: Uint8Array): MessageFrame<unknown> {
-  const frame = Frame.fromBytes(chunk);
+export function ensureChunkIsMessage(frame: Frame): MessageFrame<unknown> {
   if (frame.isMessage()) {
     return frame;
   } else if (frame.isError()) {
