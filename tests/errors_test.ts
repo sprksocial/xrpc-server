@@ -1,4 +1,4 @@
-import { LexiconDoc } from "@atproto/lexicon";
+import type { LexiconDoc } from "@atproto/lexicon";
 import { XrpcClient, XRPCError, XRPCInvalidResponseError } from "@atproto/xrpc";
 import * as xrpcServer from "../mod.ts";
 import { closeServer, createServer } from "./_util.ts";
@@ -140,7 +140,7 @@ Deno.test({
       return { encoding: "json", body: { something: "else" } };
     });
     const upstreamS = await createServer(upstreamServer);
-    const upstreamPort = (upstreamS as any).port;
+    const upstreamPort = (upstreamS as Deno.HttpServer & { port: number }).port;
     const upstreamClient = new XrpcClient(
       `http://localhost:${upstreamPort}`,
       UPSTREAM_LEXICONS,
@@ -150,7 +150,7 @@ Deno.test({
       validateResponse: false,
     }); // disable validateResponse to test client validation
     const s = await createServer(server);
-    const port = (s as any).port;
+    const port = (s as Deno.HttpServer & { port: number }).port;
     server.method("io.example.error", (ctx: { params: xrpcServer.Params }) => {
       if (ctx.params["which"] === "foo") {
         throw new xrpcServer.InvalidRequestError("It was this one!", "Foo");

@@ -26,18 +26,24 @@ export async function createServer(
   server.app.route("", server.routes);
   server.app.all("/xrpc/:methodId", server.catchall.bind(server));
 
-  // Attach the abort controller for cleanup
-  (httpServer as any).abortController = abortController;
+  // Attach the abort controller and port for cleanup and access
+  type ServerWithMetadata = Deno.HttpServer & {
+    abortController: AbortController;
+    port: number;
+  };
   
-  // Wait for the port and attach it
+  (httpServer as ServerWithMetadata).abortController = abortController;
   const port = await portPromise;
-  (httpServer as any).port = port;
+  (httpServer as ServerWithMetadata).port = port;
 
   return httpServer;
 }
 
 export async function closeServer(httpServer: Deno.HttpServer) {
-  const abortController = (httpServer as any).abortController;
+  type ServerWithAbortController = Deno.HttpServer & {
+    abortController: AbortController;
+  };
+  const abortController = (httpServer as ServerWithAbortController).abortController;
   if (abortController) {
     abortController.abort();
     await httpServer.finished;

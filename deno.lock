@@ -1,6 +1,7 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@hono/hono@^4.7.10": "4.7.11",
     "jsr:@std/assert@*": "1.0.13",
     "jsr:@std/encoding@*": "1.0.10",
     "jsr:@std/internal@^1.0.6": "1.0.8",
@@ -12,7 +13,6 @@
     "npm:cbor-x@^1.5.1": "1.6.0",
     "npm:cbor-x@^1.6.0": "1.6.0",
     "npm:get-port@^7.1.0": "7.1.0",
-    "npm:hono@^4.7.11": "4.7.11",
     "npm:http-errors@2": "2.0.0",
     "npm:jose@^6.0.11": "6.0.11",
     "npm:mime-types@^3.0.1": "3.0.1",
@@ -24,6 +24,9 @@
     "npm:zod@^3.23.8": "3.25.55"
   },
   "jsr": {
+    "@hono/hono@4.7.11": {
+      "integrity": "52b9395e4f2448fbaf82a6bd7925d15e59f4055037e74d6c2f657f3618b11193"
+    },
     "@std/assert@1.0.13": {
       "integrity": "ae0d31e41919b12c656c742b22522c32fb26ed0cba32975cb0de2a273cb68b29",
       "dependencies": [
@@ -259,9 +262,6 @@
     "graphemer@1.4.0": {
       "integrity": "sha512-EtKwoO6kxCL9WO5xipiHTZlSzBm7WLT627TqC/uVRd0HKmq8NXyebnNYxDoBi7wt8eTWrUrKXCOVaFq9x1kgag=="
     },
-    "hono@4.7.11": {
-      "integrity": "sha512-rv0JMwC0KALbbmwJDEnxvQCeJh+xbS3KEWW5PC9cMJ08Ur9xgatI0HmtgYZfOdOSOeYsp5LO2cOhdI8cLEbDEQ=="
-    },
     "http-errors@2.0.0": {
       "integrity": "sha512-FtwrG/euBzaEjYeRqOgly7G0qviiXoJWnvEH2Z1plBdXgbyjv34pHTSb9zoeHMyDy33+DWy5Wt9Wo+TURtOYSQ==",
       "dependencies": [
@@ -467,13 +467,13 @@
   },
   "workspace": {
     "dependencies": [
+      "jsr:@hono/hono@^4.7.10",
       "npm:@atproto/common@~0.4.11",
       "npm:@atproto/crypto@~0.4.4",
       "npm:@atproto/lexicon@~0.4.11",
       "npm:@atproto/xrpc@0.7",
       "npm:cbor-x@^1.6.0",
       "npm:get-port@^7.1.0",
-      "npm:hono@^4.7.11",
       "npm:http-errors@2",
       "npm:jose@^6.0.11",
       "npm:mime-types@^3.0.1",

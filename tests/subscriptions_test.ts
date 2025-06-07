@@ -1,5 +1,5 @@
 import getPort from "get-port";
-import { WebSocket, WebSocketServer } from "ws";
+import { WebSocket, type WebSocketServer } from "ws";
 import { wait } from "@atproto/common";
 import type { LexiconDoc } from "@atproto/lexicon";
 import {
@@ -127,16 +127,16 @@ Deno.test({
       },
     });
 
-    let port: number;
+    let addr: Deno.Addr;
 
     // Setup server before tests
     s = await createServer(server);
-    port = (s as any).port;
+    addr = (s as Deno.HttpServer).addr;
 
     try {
       await Deno.test("streams messages", async () => {
         const ws = new WebSocket(
-          `ws://localhost:${port}/xrpc/io.example.streamOne?countdown=5`,
+          `ws://${addr}/xrpc/io.example.streamOne?countdown=5`,
         );
 
         const frames: Frame[] = [];
@@ -156,7 +156,7 @@ Deno.test({
 
       await Deno.test("streams messages in a union", async () => {
         const ws = new WebSocket(
-          `ws://localhost:${port}/xrpc/io.example.streamTwo?countdown=5`,
+          `ws://${addr}/xrpc/io.example.streamTwo?countdown=5`,
         );
 
         const frames: Frame[] = [];
@@ -177,7 +177,7 @@ Deno.test({
 
       await Deno.test("resolves auth into handler", async () => {
         const ws = new WebSocket(
-          `ws://localhost:${port}/xrpc/io.example.streamAuth`,
+          `ws://${addr}/xrpc/io.example.streamAuth`,
           {
             headers: basicAuthHeaders({
               username: "admin",
@@ -205,7 +205,7 @@ Deno.test({
 
       await Deno.test("errors immediately on bad parameter", async () => {
         const ws = new WebSocket(
-          `ws://localhost:${port}/xrpc/io.example.streamOne`,
+          `ws://${addr}/xrpc/io.example.streamOne`,
         );
 
         const frames: Frame[] = [];
@@ -223,7 +223,7 @@ Deno.test({
 
       await Deno.test("errors immediately on bad auth", async () => {
         const ws = new WebSocket(
-          `ws://localhost:${port}/xrpc/io.example.streamAuth`,
+          `ws://${addr}/xrpc/io.example.streamAuth`,
           {
             headers: basicAuthHeaders({
               username: "bad",
@@ -246,7 +246,7 @@ Deno.test({
       });
 
       await Deno.test("does not websocket upgrade at bad endpoint", async () => {
-        const ws = new WebSocket(`ws://localhost:${port}/xrpc/does.not.exist`);
+        const ws = new WebSocket(`ws://${addr}/xrpc/does.not.exist`);
         await assertRejects(
           () => new Promise((_, reject) => {
             ws.onerror = () => reject(new Error("ECONNRESET"));
@@ -259,7 +259,7 @@ Deno.test({
       await Deno.test("subscription consumer tests", async (t) => {
         await t.step("receives messages w/ skips", async () => {
           const sub = new Subscription({
-            service: `ws://localhost:${port}`,
+            service: `ws://${addr}`,
             method: "io.example.streamOne",
             getParams: () => ({ countdown: 5 }),
             validate: (obj: unknown) => {
@@ -291,7 +291,7 @@ Deno.test({
           let countdown = 10;
           let reconnects = 0;
           const sub = new Subscription({
-            service: `ws://localhost:${port}`,
+            service: `ws://${addr}`,
             method: "io.example.streamOne",
             onReconnectError: () => reconnects++,
             getParams: () => ({ countdown }),
@@ -325,7 +325,7 @@ Deno.test({
         await t.step("aborts with signal", async () => {
           const abortController = new AbortController();
           const sub = new Subscription({
-            service: `ws://localhost:${port}`,
+            service: `ws://${addr}`,
             method: "io.example.streamOne",
             signal: abortController.signal,
             getParams: () => ({ countdown: 10 }),
@@ -377,8 +377,7 @@ Deno.test({
             // Run a server that pauses longer than heartbeat interval on first connection
             const localPort = await getPort();
             const server = Deno.serve({ port: localPort }, () => new Response());
-            let firstConnection = true;
-            let firstWasClosed = false;
+            const firstWasClosed = false;
             const firstSocketClosed = new Promise<void>((resolve) => {
               // TODO: Implement WebSocket server handling in Deno
               resolve();
@@ -411,7 +410,7 @@ Deno.test({
 
         // Restart the server for other tests
         s = await createServer(server);
-        port = (s as any).port;
+        addr = (s as Deno.HttpServer).addr;
       });
     } finally {
       // Cleanup

@@ -16,6 +16,18 @@ import type {
 } from "./types.ts";
 import { RateLimitExceededError } from "./types.ts";
 
+/**
+ * Options for the rate limiter to customize its behavior.
+ * 
+ * @prop keyPrefix - The prefix for the rate limiter key.
+ * @prop durationMs - The duration of the rate limiter in milliseconds.
+ * @prop points - The number of points to consume.
+ * @prop bypassSecret - A secret to bypass the rate limiter.
+ * @prop bypassIps - IPs that should bypass the rate limiter.
+ * @prop calcKey - The function to calculate the key.
+ * @prop calcPoints - The function to calculate the points.
+ * @prop failClosed - Whether to fail closed.
+ */
 export type RateLimiterOpts = {
   keyPrefix: string;
   durationMs: number;
@@ -27,6 +39,19 @@ export type RateLimiterOpts = {
   failClosed?: boolean;
 };
 
+/**
+ * The rate limiter uses the rate-limiter-flexible library
+ * to limit the number of requests to the server based on the
+ * options provided.
+ * 
+ * Uses a redis store by default.
+ * 
+ * Used in the server class.
+ * 
+ * @param limiter - The rate limiter instance.
+ * @param opts - The options for the rate limiter.
+ * @class
+ */
 export class RateLimiter implements RateLimiterI {
   public limiter: RateLimiterAbstract;
   private bypassSecret?: string;
@@ -134,6 +159,13 @@ export class RateLimiter implements RateLimiterI {
   }
 }
 
+/**
+ * Formats the rate limiter status into a simplified object.
+ * 
+ * @param limiter - The rate limiter instance.
+ * @param res - The rate limiter response.
+ * @returns The rate limiter status.
+ */
 export const formatLimiterStatus = (
   limiter: RateLimiterAbstract,
   res: RateLimiterRes,
@@ -148,6 +180,12 @@ export const formatLimiterStatus = (
   };
 };
 
+/**
+ * Consumes the rate limiter for many functions.
+ * @param ctx - The context.
+ * @param fns - The functions to consume.
+ * @returns The rate limiter status.
+ */
 export const consumeMany = async (
   ctx: XRPCReqContext,
   fns: RateLimiterConsume[],

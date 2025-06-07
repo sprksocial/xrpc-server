@@ -198,15 +198,13 @@ export type XRPCStreamHandler = (ctx: {
 export type AuthOutput = HandlerAuth | HandlerError;
 
 export interface AuthVerifierContext {
-  c?: Context;
-  req?: HonoRequest;
+  c: Context;
+  req: HonoRequest;
 }
 
-export type StandardOrRoleAuthOutput = StandardAuthOutput | RoleAuthOutput;
 
 export interface AuthVerifier {
   (ctx: AuthVerifierContext): Promise<AuthOutput> | AuthOutput;
-  optionalStandardOrRole?: (ctx: AuthVerifierContext) => Promise<StandardOrRoleAuthOutput | undefined> | (StandardOrRoleAuthOutput | undefined);
 }
 
 export type StreamAuthVerifierContext = {

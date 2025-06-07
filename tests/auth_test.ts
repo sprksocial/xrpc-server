@@ -83,7 +83,7 @@ Deno.test({
   async fn() {
     // Setup
     s = await createServer(server);
-    const port = (s as any).port;
+    const port = (s as Deno.HttpServer & { port: number }).port;
     client = new XrpcClient(`http://localhost:${port}`, LEXICONS);
 
     // Tests
