@@ -54,22 +54,39 @@ const REQUEST_LOCALS_KEY = "_xrpcLocals";
 /**
  * Create a new XRPC server for a given group of lexicons.
  * Should generally be used once per application.
- * @example Use as a standalone application
+ *
+ * @template E - The environment type for Hono app, defaults to Env
+ * @template P - The path parameter type for Hono app, defaults to string
+ * @template S - The schema type for Hono app, defaults to Schema
+ *
+ * @param lexicons - The lexicons to use for the server. These define the API schema and methods.
+ * @param options - Configuration options for the server including:
+ *                 - payload limits
+ *                 - rate limiting
+ *                 - error handling
+ *                 - response validation
+ *                 - custom catchall handler
+ *
+ * @example
  * ```typescript
- * const server = createServer()
+ * // Use as a standalone application
+ * const server = createServer([myLexicon], {
+ *   payload: { jsonLimit: 100_000 },
+ *   rateLimits: { ... }
+ * });
  * Deno.serve(server.app.fetch);
  * ```
- * @example Use as part of a larger Hono application
+ *
+ * @example
  * ```typescript
- * const server = createServer()
+ * // Use as part of a larger Hono application
+ * const server = createServer();
  * const app = new Hono();
  * app.route("/", server.routes);
  * Deno.serve(app.fetch);
  * ```
- * @constructor
- * @param lexicons - The lexicons to use for the server.
- * @param options - The options for the server.
- * @returns A new XRPC server.
+ *
+ * @returns A new XRPC server instance configured with the provided lexicons and options
  */
 export function createServer<
   E extends Env = Env,
@@ -83,10 +100,28 @@ export function createServer<
 }
 
 /**
- * The XRPC server class.
- * Contains the Hono app and routes.
- * Note: please ensure you are using the same version of Hono *from JSR*
- * as the one used in the project.
+ * The XRPC server class that handles API routing, validation, and request processing.
+ * Provides a complete server implementation with support for:
+ * - HTTP and WebSocket endpoints
+ * - Request/response validation against lexicon schemas
+ * - Authentication and authorization
+ * - Rate limiting
+ * - Error handling
+ * - Streaming responses
+ *
+ * @template E - The environment type for Hono app, defaults to Env
+ * @template P - The path parameter type for Hono app, defaults to string
+ * @template S - The schema type for Hono app, defaults to Schema
+ *
+ * @property {Hono<E, S, P>} app - The main Hono application instance
+ * @property {Hono<E, S, P>} routes - The router handling XRPC-specific routes
+ * @property {Map<string, XrpcStreamServer>} subscriptions - WebSocket subscription handlers by method ID
+ * @property {Lexicons} lex - The lexicon schemas used for validation
+ * @property {Options} options - Server configuration options
+ * @property {Record<string, { limit?: number }>} middleware - Middleware configuration for different content types
+ * @property {RateLimiterI[]} globalRateLimiters - Rate limiters applied to all routes
+ * @property {Record<string, RateLimiterI>} sharedRateLimiters - Named rate limiters that can be shared across routes
+ * @property {Record<string, RateLimiterI[]>} routeRateLimiters - Rate limiters specific to individual routes
  */
 export class Server<
   E extends Env = Env,
@@ -717,6 +752,25 @@ function setHeaders(
   }
 }
 
+/**
+ * Internal request context data shared between middleware and handlers.
+ * Stores authentication results and method identification.
+ * @internal
+ * @property {HandlerAuth | undefined} auth - Authentication data if auth middleware was used
+ * @property {string} nsid - The NSID (namespace identifier) of the XRPC method being called
+ */
+type RequestLocals = {
+  auth: HandlerAuth | undefined;
+  nsid: string;
+};
+
+/**
+ * Creates middleware that initializes request-local storage.
+ * Sets up a context for storing method-specific data that can be accessed by subsequent middleware and handlers.
+ * @internal
+ * @param nsid - The NSID of the XRPC method being handled
+ * @returns Middleware function that initializes request locals
+ */
 function createLocalsMiddleware(nsid: string): MiddlewareHandler {
   return async function (c: Context, next: Next): Promise<Response | void> {
     const locals: RequestLocals = { auth: undefined, nsid };
@@ -725,11 +779,14 @@ function createLocalsMiddleware(nsid: string): MiddlewareHandler {
   };
 }
 
-type RequestLocals = {
-  auth: HandlerAuth | undefined;
-  nsid: string;
-};
-
+/**
+ * Creates middleware that handles authentication for an XRPC method.
+ * Executes the provided auth verifier and stores the result in request locals.
+ * If authentication fails, throws an appropriate XRPCError.
+ * @internal
+ * @param verifier - The authentication verification function to use
+ * @returns Middleware function that performs authentication
+ */
 function createAuthMiddleware(verifier: AuthVerifier): MiddlewareHandler {
   return async function (c: Context, next: Next): Promise<Response | void> {
     try {
@@ -746,6 +803,13 @@ function createAuthMiddleware(verifier: AuthVerifier): MiddlewareHandler {
   };
 }
 
+/**
+ * Creates middleware that handles error responses for the XRPC server.
+ * Formats errors according to the XRPC specification and includes appropriate logging.
+ * @internal
+ * @param options - Server options containing error parsing configuration
+ * @returns Middleware function that handles errors
+ */
 function createErrorMiddleware({
   errorParser = (err) => XRPCError.fromError(err),
 }: Options) {

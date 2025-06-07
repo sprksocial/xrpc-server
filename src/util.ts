@@ -18,17 +18,18 @@ import type {
 } from "./types.ts";
 import type { HonoRequest } from "hono";
 
-// Web-standard stream types
-type StreamDestination = WritableStream;
-type StreamListener = (...args: unknown[]) => void;
-type ReadableStreamLike = Pick<ReadableStream, "getReader" | "pipeTo" | "tee">;
-
 function assert(condition: unknown, message?: string): asserts condition {
   if (!condition) {
     throw new Error(message || "Assertion failed");
   }
 }
 
+/**
+ * Decodes query parameters.
+ * @param def - The definition of the method
+ * @param params - The parameters to decode
+ * @returns The decoded parameters
+ */
 export function decodeQueryParams(
   def: LexXrpcProcedure | LexXrpcQuery | LexXrpcSubscription,
   params: UndecodedParams,
@@ -54,6 +55,12 @@ export function decodeQueryParams(
   return decoded;
 }
 
+/**
+ * Decodes a query parameter.
+ * @param type - The type of the parameter
+ * @param value - The value of the parameter
+ * @returns The decoded parameter
+ */
 export function decodeQueryParam(
   type: string,
   value: unknown,
@@ -82,7 +89,16 @@ export function getQueryParams(url = ""): Record<string, string[]> {
   return result;
 }
 
-// Update RequestLike interface
+/**
+ * Represents a request-like object with essential HTTP request properties.
+ * Used for handling both standard HTTP requests and custom request implementations.
+ * @interface
+ * @property {Headers | { [key: string]: string | string[] | undefined }} [headers] - HTTP headers as either a Headers object or a key-value map
+ * @property {ReadableStream | unknown} [body] - Request body as either a ReadableStream or any other data type
+ * @property {string} [method] - HTTP method (GET, POST, etc.)
+ * @property {string} [url] - Full URL of the request
+ * @property {AbortSignal} [signal] - AbortSignal for request cancellation
+ */
 export type RequestLike = {
   headers: Headers | { [key: string]: string | string[] | undefined };
   body?: ReadableStream | unknown;
@@ -91,6 +107,14 @@ export type RequestLike = {
   signal?: AbortSignal;
 };
 
+/**
+ * Validates the input of an xrpc method.
+ * @param nsid - The NSID of the method
+ * @param def - The definition of the method
+ * @param body - The body of the request
+ * @param contentType - The content type of the request
+ * @param lexicons - The lexicons to use
+ */
 export async function validateInput(
   nsid: string,
   def: LexXrpcProcedure | LexXrpcQuery,
@@ -170,6 +194,13 @@ export async function validateInput(
   };
 }
 
+/**
+ * Validates the output of an xrpc method.
+ * @param nsid - The NSID of the method
+ * @param def - The definition of the method
+ * @param output - The output of the method
+ * @param lexicons - The lexicons to use
+ */
 export function validateOutput(
   nsid: string,
   def: LexXrpcProcedure | LexXrpcQuery,
@@ -217,6 +248,11 @@ export function validateOutput(
   }
 }
 
+/**
+ * Normalize a mime type
+ * @param mime - The mime type to normalize
+ * @returns The normalized mime type
+ */
 export function normalizeMime(mime: string): string {
   const [base] = mime.split(";");
   return base.trim().toLowerCase();
@@ -245,6 +281,11 @@ function getBodyPresence(
   return "present";
 }
 
+/**
+ * Server timing header
+ * @param timings - The timings to format
+ * @returns The formatted header
+ */
 export function serverTimingHeader(timings: ServerTiming[]): string {
   return timings
     .map((timing) => {
@@ -256,6 +297,12 @@ export function serverTimingHeader(timings: ServerTiming[]): string {
     .join(", ");
 }
 
+/**
+ * Server timer
+ * @prop name - The name of the timer
+ * @prop description - The description of the timer
+ * @prop duration - The duration of the timer
+ */
 export class ServerTimer implements ServerTiming {
   public duration?: number;
   private startMs?: number;
@@ -274,24 +321,48 @@ export class ServerTimer implements ServerTiming {
   }
 }
 
+/**
+ * Represents timing information for server-side operations.
+ * Used for performance monitoring and debugging.
+ * @interface
+ * @property {string} name - Identifier for the timing measurement
+ * @property {number} [duration] - Duration of the operation in milliseconds
+ * @property {string} [description] - Optional description of what was timed
+ */
 export interface ServerTiming {
   name: string;
   duration?: number;
   description?: string;
 }
 
+/**
+ * Represents a minimal HTTP request with essential properties.
+ * Used when full request information is not needed.
+ * @interface
+ * @property {string} [url] - The URL of the request
+ * @property {string} [method] - The HTTP method (GET, POST, etc.)
+ * @property {Headers | { [key: string]: string | string[] | undefined }} headers - Request headers as either a Headers object or a key-value map
+ */
 export interface MinimalRequest {
   url?: string;
   method?: string;
   headers: Headers | { [key: string]: string | string[] | undefined };
 }
 
+/**
+ * Validates and extracts the NSID from a request.
+ * Can be used for auth verifiers.
+ * @param req - The request to parse
+ * @returns The extracted NSID
+ */
 export const parseReqNsid = (
   req: MinimalRequest | HonoRequest,
 ): string => parseUrlNsid(req.url || "/");
 
 /**
- * Validates and extracts the nsid from an xrpc path
+ * Validates and extracts the NSID from a URL.
+ * @param url - The URL to parse
+ * @returns The extracted NSID
  */
 export const parseUrlNsid = (url: string): string => {
   // /!\ Hot path
