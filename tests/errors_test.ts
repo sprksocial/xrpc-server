@@ -1,4 +1,3 @@
-import { AddressInfo } from "node:net";
 import { LexiconDoc } from "@atproto/lexicon";
 import { XrpcClient, XRPCError, XRPCInvalidResponseError } from "@atproto/xrpc";
 import * as xrpcServer from "../mod.ts";
@@ -141,8 +140,9 @@ Deno.test({
       return { encoding: "json", body: { something: "else" } };
     });
     const upstreamS = await createServer(upstreamServer);
+    const upstreamPort = (upstreamS as any).port;
     const upstreamClient = new XrpcClient(
-      `http://localhost:${(upstreamS.address() as AddressInfo).port}`,
+      `http://localhost:${upstreamPort}`,
       UPSTREAM_LEXICONS,
     );
 
@@ -150,6 +150,7 @@ Deno.test({
       validateResponse: false,
     }); // disable validateResponse to test client validation
     const s = await createServer(server);
+    const port = (s as any).port;
     server.method("io.example.error", (ctx: { params: xrpcServer.Params }) => {
       if (ctx.params["which"] === "foo") {
         throw new xrpcServer.InvalidRequestError("It was this one!", "Foo");
@@ -180,7 +181,6 @@ Deno.test({
       return undefined;
     });
 
-    const { port } = s.address() as AddressInfo;
     const client = new XrpcClient(`http://localhost:${port}`, LEXICONS);
     const badClient = new XrpcClient(
       `http://localhost:${port}`,

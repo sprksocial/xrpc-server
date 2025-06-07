@@ -1,13 +1,13 @@
 import { once } from "node:events";
 import * as http from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import { WebSocket } from "ws";
 import { XRPCError } from "@atproto/xrpc";
 import {
   byFrame,
   byMessage,
   ErrorFrame,
-  Frame,
+  type Frame,
   MessageFrame,
   XrpcStreamServer,
 } from "../mod.ts";

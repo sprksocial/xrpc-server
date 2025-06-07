@@ -51,21 +51,55 @@ import {
   validateOutput,
 } from "./util.ts";
 import type { IncomingMessage, Server as HttpServer } from "node:http";
-import type { Context, MiddlewareHandler, Next } from "hono";
+import type { Context, MiddlewareHandler, Next, Schema, Env } from "hono";
 import { Buffer } from "node:buffer";
 
 const REQUEST_LOCALS_KEY = "_xrpcLocals";
 
-export function createServer(
+/**
+ * Create a new XRPC server for a given group of lexicons.
+ * Should generally be used once per application.
+ * @example Use as a standalone application
+ * ```typescript
+ * const server = createServer()
+ * Deno.serve(server.app.fetch);
+ * ```
+ * @example Use as part of a larger Hono application
+ * ```typescript
+ * const server = createServer()
+ * const app = new Hono();
+ * app.route("/", server.routes);
+ * Deno.serve(app.fetch);
+ * ```
+ * @constructor
+ * @param lexicons - The lexicons to use for the server.
+ * @param options - The options for the server.
+ * @returns A new XRPC server.
+ */
+export function createServer<
+  E extends Env = Env,
+  P extends string = string,
+  S extends Schema = Schema
+>(
   lexicons?: LexiconDoc[],
   options?: Options,
-): Server {
-  return new Server(lexicons, options);
+): Server<E, P, S> {
+  return new Server<E, P, S>(lexicons, options);
 }
 
-export class Server {
-  app: Hono = new Hono();
-  routes: Hono = new Hono();
+/**
+ * The XRPC server class.
+ * Contains the Hono app and routes.
+ * Note: please ensure you are using the same version of Hono *from JSR* 
+ * as the one used in the project.
+ */
+export class Server<
+  E extends Env = Env,
+  P extends string = string,
+  S extends Schema = Schema
+> {
+  public app: Hono<E, S, P> = new Hono<E, S, P>();
+  public routes: Hono<E, S, P> = new Hono<E, S, P>();
   subscriptions: Map<string, XrpcStreamServer> = new Map<string, XrpcStreamServer>();
   lex: Lexicons = new Lexicons();
   options: Options;
@@ -79,8 +113,8 @@ export class Server {
     if (lexicons) {
       this.addLexicons(lexicons);
     }
-    this.app = new Hono();
-    this.routes = new Hono();
+    this.app = new Hono<E, S, P>();
+    this.routes = new Hono<E, S, P>();
     this.app.route("", this.routes);
     this.app.all("/xrpc/:methodId", this.catchall.bind(this));
     this.app.onError(createErrorMiddleware(opts));
@@ -337,7 +371,7 @@ export class Server {
         const rlRes = await consumeMany(
           {
             c,
-            req: c.env.incoming as IncomingMessage,
+            req: c.req,
             auth: undefined,
             params: {},
             input: undefined,
@@ -434,7 +468,7 @@ export class Server {
           input,
           auth: locals.auth,
           c,
-          req: c.env.incoming as IncomingMessage,
+          req: c.req,
           resetRouteRateLimits: () => resetRateLimit(reqCtx),
         };
 
@@ -653,6 +687,12 @@ export class Server {
       }
     }
   }
+
+  public router(): Hono {
+    const router = new Hono();
+    router.route('/', this.routes);
+    return router;
+  }
 }
 
 function setHeaders(
@@ -683,7 +723,7 @@ type RequestLocals = {
 function createAuthMiddleware(verifier: AuthVerifier): MiddlewareHandler {
   return async function (c: Context, next: Next): Promise<Response | void> {
     try {
-      const result = await verifier({ c });
+      const result = await verifier({ c, req: c.req });
       if (isHandlerError(result)) {
         throw XRPCError.fromHandlerError(result);
       }
@@ -705,7 +745,7 @@ function createErrorMiddleware({
 
     const xrpcError = errorParser(err);
 
-    const logger = isPinoHttpRequest(c.req.raw) ? c.req.raw.log : log;
+    const logger = isPinoHttpRequest(c.req) ? c.req.log : log;
 
     const isInternalError = xrpcError instanceof InternalServerError;
 

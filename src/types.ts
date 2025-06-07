@@ -1,6 +1,6 @@
 import type { IncomingMessage } from "node:http";
 import { Readable } from "node:stream";
-import type { Context, Next } from "hono";
+import type { Context, Next, HonoRequest } from "hono";
 import { isHttpError } from "http-errors";
 import { z } from "zod";
 import { Buffer } from "node:buffer";
@@ -65,6 +65,40 @@ export const handlerInput = z.object({
 export type HandlerAuth = {
   credentials: unknown;
   artifacts: unknown;
+};
+
+export type NullAuthOutput = HandlerAuth & {
+  credentials: {
+    type: "none";
+    iss: null;
+  };
+  artifacts: Record<string, never>;
+};
+
+export type StandardAuthOutput = HandlerAuth & {
+  credentials: {
+    type: "standard";
+    aud: string;
+    iss: string;
+  };
+  artifacts: Record<string, never>;
+};
+
+export type RoleAuthOutput = HandlerAuth & {
+  credentials: {
+    type: "role";
+    admin: boolean;
+  };
+  artifacts: Record<string, never>;
+};
+
+export type ModServiceAuthOutput = HandlerAuth & {
+  credentials: {
+    type: "mod_service";
+    aud: string;
+    iss: string;
+  };
+  artifacts: Record<string, never>;
 };
 
 export const handlerAuth = z.object({
@@ -140,7 +174,7 @@ export type XRPCReqContext = {
   input: HandlerInput | undefined;
   auth: HandlerAuth | undefined;
   resetRouteRateLimits: () => Promise<void>;
-  req?: IncomingMessage;
+  req?: HonoRequest;
 };
 
 export type XRPCStreamReqContext = {
@@ -164,16 +198,20 @@ export type XRPCStreamHandler = (ctx: {
 export type AuthOutput = HandlerAuth | HandlerError;
 
 export interface AuthVerifierContext {
-  c: Context;
+  c?: Context;
+  req?: HonoRequest;
 }
 
-export type AuthVerifier = (
-  ctx: AuthVerifierContext,
-) => Promise<AuthOutput> | AuthOutput;
+export type StandardOrRoleAuthOutput = StandardAuthOutput | RoleAuthOutput;
 
-export interface StreamAuthVerifierContext {
+export interface AuthVerifier {
+  (ctx: AuthVerifierContext): Promise<AuthOutput> | AuthOutput;
+  optionalStandardOrRole?: (ctx: AuthVerifierContext) => Promise<StandardOrRoleAuthOutput | undefined> | (StandardOrRoleAuthOutput | undefined);
+}
+
+export type StreamAuthVerifierContext = {
   req: IncomingMessage;
-}
+};
 
 export type StreamAuthVerifier = (
   ctx: StreamAuthVerifierContext,

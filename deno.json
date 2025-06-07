@@ -10,7 +10,7 @@
     "@atproto/xrpc": "npm:@atproto/xrpc@^0.7.0",
     "cbor-x": "npm:cbor-x@^1.6.0",
     "get-port": "npm:get-port@^7.1.0",
-    "hono": "npm:hono@^4.7.11",
+    "hono": "jsr:@hono/hono@^4.7.10",
     "http-errors": "npm:http-errors@^2.0.0",
     "jose": "npm:jose@^6.0.11",
     "mime-types": "npm:mime-types@^3.0.1",

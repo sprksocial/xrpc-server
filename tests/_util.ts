@@ -1,60 +1,47 @@
-import { once } from "node:events";
-import * as http from "node:http";
 import type * as xrpc from "../mod.ts";
 import { AuthRequiredError } from "../src/types.ts";
-import { Buffer } from "node:buffer";
 
 export async function createServer(
   server: xrpc.Server,
-): Promise<http.Server> {
-  const httpServer = http.createServer((req, res) => {
-    const fetchPromise = server.app.fetch(
-      new Request(req.url || "", {
-        method: req.method || "GET",
-        headers: req.headers as HeadersInit,
-        body: req.method !== "GET" && req.method !== "HEAD"
-          ? req as unknown as BodyInit
-          : null,
-      }),
-    );
-
-    Promise.resolve(fetchPromise).then((response: Response) => {
-      res.statusCode = response.status;
-      response.headers.forEach((value: string, key: string) =>
-        res.setHeader(key, value)
-      );
-      if (response.body) {
-        response.body.pipeTo(
-          new WritableStream({
-            write(chunk) {
-              res.write(chunk);
-            },
-            close() {
-              res.end();
-            },
-          }),
-        );
-      } else {
-        res.end();
-      }
-    });
+): Promise<Deno.HttpServer> {
+  const abortController = new AbortController();
+  let resolveServer: (value: number) => void;
+  const portPromise = new Promise<number>((resolve) => {
+    resolveServer = resolve;
   });
-
-  httpServer.listen(0);
-  server.enableStreamingOnListen(httpServer);
+  
+  const httpServer = Deno.serve({
+    signal: abortController.signal,
+    port: 0,
+    onListen({ port }) {
+      resolveServer(port);
+    },
+    handler: async (req) => {
+      const response = await server.app.fetch(req);
+      return response;
+    },
+  });
 
   // Add XRPC routes to the server
   server.app.route("", server.routes);
   server.app.all("/xrpc/:methodId", server.catchall.bind(server));
 
-  await once(httpServer, "listening");
+  // Attach the abort controller for cleanup
+  (httpServer as any).abortController = abortController;
+  
+  // Wait for the port and attach it
+  const port = await portPromise;
+  (httpServer as any).port = port;
+
   return httpServer;
 }
 
-export async function closeServer(httpServer: http.Server) {
-  await new Promise((r) => {
-    httpServer.close(() => r(undefined));
-  });
+export async function closeServer(httpServer: Deno.HttpServer) {
+  const abortController = (httpServer as any).abortController;
+  if (abortController) {
+    abortController.abort();
+    await httpServer.finished;
+  }
 }
 
 export function createBasicAuth(allowed: {
@@ -66,9 +53,8 @@ export function createBasicAuth(allowed: {
       throw new AuthRequiredError();
     }
     const original = header.replace("Basic ", "");
-    const [username, password] = Buffer.from(original, "base64")
-      .toString()
-      .split(":");
+    const decoded = atob(original);
+    const [username, password] = decoded.split(":");
     if (username !== allowed.username || password !== allowed.password) {
       throw new AuthRequiredError();
     }
@@ -94,9 +80,8 @@ export function createStreamBasicAuth(allowed: {
       throw new AuthRequiredError();
     }
     const original = header.replace("Basic ", "");
-    const [username, password] = Buffer.from(original, "base64")
-      .toString()
-      .split(":");
+    const decoded = atob(original);
+    const [username, password] = decoded.split(":");
     if (username !== allowed.username || password !== allowed.password) {
       throw new AuthRequiredError();
     }
@@ -117,6 +102,6 @@ export function basicAuthHeaders(creds: {
 }) {
   return {
     authorization: "Basic " +
-      Buffer.from(`${creds.username}:${creds.password}`).toString("base64"),
+      btoa(`${creds.username}:${creds.password}`),
   };
 }

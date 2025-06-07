@@ -139,7 +139,7 @@ export const verifyJwt = async (
       sigBytes,
       alg,
     );
-  } catch (err) {
+  } catch {
     throw new AuthRequiredError(
       "could not verify jwt signature",
       "BadJwtSignature",
@@ -158,7 +158,7 @@ export const verifyJwt = async (
           alg,
         )
         : false;
-    } catch (err) {
+    } catch {
       throw new AuthRequiredError(
         "could not verify jwt signature",
         "BadJwtSignature",
@@ -176,7 +176,7 @@ export const verifyJwt = async (
   return payload;
 };
 
-export const cryptoVerifySignatureWithKey: VerifySignatureWithKeyFn = async (
+export const cryptoVerifySignatureWithKey: VerifySignatureWithKeyFn = (
   key: string,
   msgBytes: Uint8Array,
   sigBytes: Uint8Array,

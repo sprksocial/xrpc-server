@@ -1,6 +1,6 @@
-import { IncomingMessage } from "node:http";
+import type { IncomingMessage } from "node:http";
 import { ServerOptions, WebSocket, WebSocketServer } from "ws";
-import { ErrorFrame, Frame } from "./frames.ts";
+import { ErrorFrame, type Frame } from "./frames.ts";
 import { logger } from "../logger.ts";
 import { CloseCode, DisconnectError } from "./types.ts";
 

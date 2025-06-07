@@ -1,7 +1,3 @@
-import { createPrivateKey } from "node:crypto";
-import type { KeyObject } from "node:crypto";
-import type * as http from "node:http";
-import type { AddressInfo } from "node:net";
 import * as jose from "jose";
 import { MINUTE } from "@atproto/common";
 import { Secp256k1Keypair } from "@atproto/crypto";
@@ -53,7 +49,7 @@ const LEXICONS: LexiconDoc[] = [
   },
 ];
 
-let s: http.Server;
+let s: Deno.HttpServer;
 let client: XrpcClient;
 const server = xrpcServer.createServer(LEXICONS);
 
@@ -87,7 +83,7 @@ Deno.test({
   async fn() {
     // Setup
     s = await createServer(server);
-    const { port } = s.address() as AddressInfo;
+    const port = (s as any).port;
     client = new XrpcClient(`http://localhost:${port}`, LEXICONS);
 
     // Tests
@@ -353,12 +349,24 @@ Deno.test({
   },
 });
 
-const createPrivateKeyObject = async (
+async function createPrivateKeyObject(
   privateKey: Secp256k1Keypair,
-): Promise<KeyObject> => {
+): Promise<CryptoKey> {
   const raw = await privateKey.export();
   const pemKey = `-----BEGIN EC PRIVATE KEY-----\n${
     encodeBase64(raw)
   }\n-----END EC PRIVATE KEY-----`;
-  return createPrivateKey({ format: "pem", key: pemKey });
-};
+  
+  // Convert PEM to CryptoKey
+  const binaryDer = new TextEncoder().encode(pemKey);
+  return await crypto.subtle.importKey(
+    "pkcs8",
+    binaryDer,
+    {
+      name: "ECDSA",
+      namedCurve: "P-256",
+    },
+    true,
+    ["sign"]
+  );
+}

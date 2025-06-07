@@ -1,20 +1,20 @@
 import {
-  RateLimiterAbstract,
+  type RateLimiterAbstract,
   RateLimiterMemory,
   RateLimiterRedis,
   RateLimiterRes,
 } from "rate-limiter-flexible";
 import { logger } from "./logger.ts";
-import {
+import type {
   CalcKeyFn,
   CalcPointsFn,
   RateLimiterConsume,
   RateLimiterI,
   RateLimiterReset,
   RateLimiterStatus,
-  RateLimitExceededError,
   XRPCReqContext,
 } from "./types.ts";
+import { RateLimitExceededError } from "./types.ts";
 
 export type RateLimiterOpts = {
   keyPrefix: string;
@@ -207,6 +207,7 @@ const defaultKey: CalcKeyFn = (ctx: XRPCReqContext) => {
   if (forwarded) return forwarded;
   const realIp = ctx.c.req.header("x-real-ip");
   if (realIp) return realIp;
-  return ctx.req?.socket?.remoteAddress || null;
+  return ctx.c.req.header("x-forwarded-for")?.split(",")[0] ||
+    ctx.c.req.header("x-real-ip") || null;
 };
 const defaultPoints: CalcPointsFn = () => 1;

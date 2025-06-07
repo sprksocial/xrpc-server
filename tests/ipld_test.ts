@@ -1,4 +1,3 @@
-import { AddressInfo } from "node:net";
 import { CID } from "multiformats/cid";
 import { LexiconDoc } from "@atproto/lexicon";
 import { XrpcClient } from "@atproto/xrpc";
@@ -76,7 +75,7 @@ Deno.test({
     );
 
     // Setup server and client
-    const { port } = s.address() as AddressInfo;
+    const port = (s as any).port;
     const client = new XrpcClient(`http://localhost:${port}`, LEXICONS);
 
     try {

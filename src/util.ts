@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import type { IncomingMessage } from "node:http";
+import type { IncomingMessage, IncomingHttpHeaders } from "node:http";
 import type { Duplex, Readable } from "node:stream";
 import { jsonToLex } from "@atproto/lexicon";
 import type {
@@ -16,6 +16,7 @@ import type {
   UndecodedParams,
 } from "./types.ts";
 import { Buffer } from "node:buffer";
+import type { HonoRequest } from "hono";
 
 // Add type at the top
 type StreamDestination = Duplex | NodeJS.WritableStream;
@@ -277,10 +278,16 @@ export interface ServerTiming {
   description?: string;
 }
 
+export interface MinimalRequest {
+  url?: string;
+  method?: string;
+  header?: (name: string) => string | undefined;
+  headers?: IncomingHttpHeaders;
+}
+
 export const parseReqNsid = (
-  req: IncomingMessage & { originalUrl?: string },
-): string =>
-  parseUrlNsid(req.originalUrl || (req.url || "/"));
+  req: MinimalRequest | IncomingMessage | HonoRequest,
+): string => parseUrlNsid(req.url || "/");
 
 /**
  * Validates and extracts the nsid from an xrpc path

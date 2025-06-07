@@ -1,4 +1,3 @@
-import { AddressInfo } from "node:net";
 import { Readable } from "node:stream";
 import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
 import { cidForCbor } from "@atproto/common";
@@ -171,7 +170,7 @@ Deno.test({
 
     // Setup
     const s = await createServer(server);
-    const { port } = s.address() as AddressInfo;
+    const port = (s as any).port;
     const url = `http://localhost:${port}`;
     const client = new XrpcClient(url, LEXICONS);
 

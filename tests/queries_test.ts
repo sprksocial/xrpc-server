@@ -1,5 +1,4 @@
-import { AddressInfo } from "node:net";
-import { LexiconDoc } from "@atproto/lexicon";
+import type { LexiconDoc } from "@atproto/lexicon";
 import { XrpcClient } from "@atproto/xrpc";
 import * as xrpcServer from "../mod.ts";
 import { closeServer, createServer } from "./_util.ts";
@@ -100,7 +99,7 @@ Deno.test({
 
     // Create server and client
     const s = await createServer(server);
-    const { port } = s.address() as AddressInfo;
+    const port = (s as any).port;
     const client = new XrpcClient(`http://localhost:${port}`, LEXICONS);
 
     try {
