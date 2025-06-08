@@ -740,6 +740,14 @@ export class Server<
   }
 }
 
+/**
+ * Sets response headers from the handler result.
+ * Copies all non-null headers from the result to the response headers object.
+ *
+ * @param {Headers} headers - The response headers object to modify
+ * @param {HandlerSuccess | HandlerPipeThrough} result - The handler result containing headers to copy
+ * @internal
+ */
 function setHeaders(
   headers: Headers,
   result: HandlerSuccess | HandlerPipeThrough,
@@ -848,8 +856,20 @@ function createErrorMiddleware({
   };
 }
 
+/**
+ * Type definition for objects with Pino-style logging.
+ * Used to detect if a request has a Pino logger attached.
+ * @internal
+ */
 type PinoLike = { log: { error: (obj: unknown, msg: string) => void } };
 
+/**
+ * Type guard to check if a request object has Pino logging capabilities.
+ *
+ * @param {unknown} req - The request object to check
+ * @returns {boolean} True if the request has a Pino-compatible logger
+ * @internal
+ */
 function isPinoHttpRequest(req: unknown): req is PinoLike {
   if (!req || typeof req !== "object") return false;
   const maybeLogger = req as Partial<PinoLike>;
@@ -857,6 +877,14 @@ function isPinoHttpRequest(req: unknown): req is PinoLike {
     typeof maybeLogger.log.error === "function");
 }
 
+/**
+ * Converts an Error object into a simplified object suitable for logging.
+ * Preserves important error properties while making them enumerable.
+ *
+ * @param {unknown} err - The error to simplify
+ * @returns {unknown} A simplified error-like object
+ * @internal
+ */
 function toSimplifiedErrorLike(err: unknown): unknown {
   if (err instanceof Error) {
     // Transform into an "ErrorLike" for pino's std "err" serializer
@@ -869,8 +897,6 @@ function toSimplifiedErrorLike(err: unknown): unknown {
             "[object Function]"
         ? err.constructor.name // extract the class name for sub-classes of Error
         : err.name,
-      // @NOTE Error.stack, Error.cause and AggregateError.error are non
-      // enumerable properties so they won't be spread to the ErrorLike
     };
   }
 

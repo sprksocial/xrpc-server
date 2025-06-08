@@ -3,8 +3,21 @@ import { ErrorFrame, type Frame } from "./frames.ts";
 import { logger } from "../logger.ts";
 import { CloseCode, DisconnectError } from "./types.ts";
 
+/**
+ * XRPC WebSocket streaming server implementation.
+ * Handles WebSocket connections and message streaming for XRPC methods.
+ * @class
+ */
 export class XrpcStreamServer {
   wss: WebSocketServer;
+
+  /**
+   * Creates a new XRPC streaming server instance.
+   * @constructor
+   * @param {Object} opts - Server configuration options
+   * @param {Handler} opts.handler - Function to handle incoming WebSocket connections
+   * @param {ServerOptions} opts - Additional WebSocket server options
+   */
   constructor(opts: ServerOptions & { handler: Handler }) {
     const { handler, ...serverOpts } = opts;
     this.wss = new WebSocketServer(serverOpts);
@@ -55,6 +68,15 @@ export class XrpcStreamServer {
   }
 }
 
+/**
+ * Handler function type for WebSocket connections.
+ * @callback Handler
+ * @param {Request} req - The incoming WebSocket request
+ * @param {AbortSignal} signal - Signal for detecting connection abort
+ * @param {WebSocket} socket - The WebSocket connection
+ * @param {XrpcStreamServer} server - The server instance
+ * @returns {AsyncIterable<Frame>} An async iterable of frames to send
+ */
 export type Handler = (
   req: Request,
   signal: AbortSignal,
@@ -62,10 +84,22 @@ export type Handler = (
   server: XrpcStreamServer,
 ) => AsyncIterable<Frame>;
 
+/**
+ * Unwraps an AsyncIterable into its AsyncIterator.
+ * @template T - The type of values being iterated
+ * @param {AsyncIterable<T>} iterable - The iterable to unwrap
+ * @returns {AsyncIterator<T>} The unwrapped iterator
+ */
 function unwrapIterator<T>(iterable: AsyncIterable<T>): AsyncIterator<T> {
   return iterable[Symbol.asyncIterator]();
 }
 
+/**
+ * Wraps an AsyncIterator back into an AsyncIterable.
+ * @template T - The type of values being iterated
+ * @param {AsyncIterator<T>} iterator - The iterator to wrap
+ * @returns {AsyncIterable<T>} The wrapped iterable
+ */
 function wrapIterator<T>(iterator: AsyncIterator<T>): AsyncIterable<T> {
   return {
     [Symbol.asyncIterator]() {

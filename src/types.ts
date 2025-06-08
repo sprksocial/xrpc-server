@@ -11,7 +11,8 @@ import {
 
 /**
  * Options for error handling.
- * @property {unknown} [cause] - The cause of the error
+ * @interface
+ * @property {unknown} [cause] - The underlying cause of the error
  */
 type ErrorOptions = {
   cause?: unknown;
@@ -20,6 +21,10 @@ type ErrorOptions = {
 /**
  * Handler for unmatched XRPC method calls.
  * Used to provide custom handling for methods not explicitly defined.
+ * @typedef {Function} CatchallHandler
+ * @param {Context} c - The Hono context object
+ * @param {Function} next - Function to call the next middleware
+ * @returns {unknown} The handler's response
  */
 export type CatchallHandler = (
   c: Context,
@@ -28,6 +33,7 @@ export type CatchallHandler = (
 
 /**
  * Configuration options for the XRPC server.
+ * @interface
  * @property {boolean} [validateResponse] - Whether to validate responses against lexicon schemas
  * @property {Function} [catchall] - Handler for unmatched XRPC method calls
  * @property {Object} [payload] - Request payload size limits
@@ -545,6 +551,12 @@ function mapFromClientError(error: XRPCClientError): {
 /**
  * Base class for XRPC errors.
  * Provides standardized error handling and formatting for XRPC responses.
+ * @class
+ * @extends Error
+ * @property {ResponseType} type - The HTTP response type/status code
+ * @property {string} [errorMessage] - Human-readable error message
+ * @property {string} [customErrorName] - Custom error identifier
+ * @property {unknown} [cause] - The underlying cause of the error
  */
 export class XRPCError extends Error {
   public override cause?: unknown;
@@ -561,6 +573,10 @@ export class XRPCError extends Error {
     }
   }
 
+  /**
+   * Gets the HTTP status code for this error.
+   * @returns {number} The HTTP status code
+   */
   get statusCode(): number {
     const { type } = this;
 
@@ -574,6 +590,10 @@ export class XRPCError extends Error {
     return type;
   }
 
+  /**
+   * Gets the error payload for the response.
+   * @returns {{ error: string; message: string }} The formatted error payload
+   */
   get payload(): { error: string; message: string } {
     return {
       error: this.customErrorName ?? this.typeName ?? "Unknown",
@@ -583,14 +603,29 @@ export class XRPCError extends Error {
     };
   }
 
+  /**
+   * Gets the name of the error type.
+   * @returns {string | undefined} The error type name
+   */
   get typeName(): string | undefined {
     return ResponseType[this.type];
   }
 
+  /**
+   * Gets the string representation of the error type.
+   * @returns {string | undefined} The error type string
+   */
   get typeStr(): string | undefined {
     return ResponseTypeStrings[this.type];
   }
 
+  /**
+   * Creates an XRPCError from any error object.
+   * Handles various error types and formats them consistently.
+   * @static
+   * @param {unknown} cause - The error to convert
+   * @returns {XRPCError} A properly formatted XRPC error
+   */
   static fromError(cause: unknown): XRPCError {
     if (cause instanceof XRPCError) {
       return cause;
@@ -630,11 +665,22 @@ export class XRPCError extends Error {
     );
   }
 
+  /**
+   * Creates an XRPCError from a HandlerError object.
+   * @static
+   * @param {HandlerError} err - The handler error to convert
+   * @returns {XRPCError} A properly formatted XRPC error
+   */
   static fromHandlerError(err: HandlerError): XRPCError {
     return new XRPCError(err.status, err.message, err.error, { cause: err });
   }
 }
 
+/**
+ * Type guard to check if a value is a HandlerError.
+ * @param {unknown} v - The value to check
+ * @returns {boolean} True if the value is a HandlerError
+ */
 export function isHandlerError(v: unknown): v is HandlerError {
   if (!v || typeof v !== "object") return false;
   const obj = v as Record<string, unknown>;
@@ -645,12 +691,22 @@ export function isHandlerError(v: unknown): v is HandlerError {
   );
 }
 
+/**
+ * Type guard to check if a value is a HandlerPipeThroughBuffer.
+ * @param {HandlerOutput} v - The value to check
+ * @returns {boolean} True if the value is a HandlerPipeThroughBuffer
+ */
 export function isHandlerPipeThroughBuffer(
   v: HandlerOutput,
 ): v is HandlerPipeThroughBuffer {
   return "buffer" in v && (v as HandlerPipeThroughBuffer).buffer !== undefined;
 }
 
+/**
+ * Type guard to check if a value is a HandlerPipeThroughStream.
+ * @param {HandlerOutput} v - The value to check
+ * @returns {boolean} True if the value is a HandlerPipeThroughStream
+ */
 export function isHandlerPipeThroughStream(
   v: HandlerOutput,
 ): v is HandlerPipeThroughStream {
