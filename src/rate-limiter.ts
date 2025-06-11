@@ -10,34 +10,12 @@ import type {
   CalcPointsFn,
   RateLimiterConsume,
   RateLimiterI,
+  RateLimiterOpts,
   RateLimiterReset,
   RateLimiterStatus,
   XRPCReqContext,
 } from "./types.ts";
 import { RateLimitExceededError } from "./types.ts";
-
-/**
- * Options for the rate limiter to customize its behavior.
- *
- * @prop keyPrefix - The prefix for the rate limiter key.
- * @prop durationMs - The duration of the rate limiter in milliseconds.
- * @prop points - The number of points to consume.
- * @prop bypassSecret - A secret to bypass the rate limiter.
- * @prop bypassIps - IPs that should bypass the rate limiter.
- * @prop calcKey - The function to calculate the key.
- * @prop calcPoints - The function to calculate the points.
- * @prop failClosed - Whether to fail closed.
- */
-export type RateLimiterOpts = {
-  keyPrefix: string;
-  durationMs: number;
-  points: number;
-  bypassSecret?: string;
-  bypassIps?: string[];
-  calcKey?: CalcKeyFn;
-  calcPoints?: CalcPointsFn;
-  failClosed?: boolean;
-};
 
 /**
  * The rate limiter uses the rate-limiter-flexible library
@@ -54,16 +32,15 @@ export type RateLimiterOpts = {
  */
 export class RateLimiter implements RateLimiterI {
   public limiter: RateLimiterAbstract;
-  private bypassSecret?: string;
-  private bypassIps?: string[];
+  private bypass?: (ctx: XRPCReqContext) => boolean | Promise<boolean>;
   private failClosed?: boolean;
   public calcKey: CalcKeyFn;
   public calcPoints: CalcPointsFn;
 
   constructor(limiter: RateLimiterAbstract, opts: RateLimiterOpts) {
     this.limiter = limiter;
-    this.bypassSecret = opts.bypassSecret;
-    this.bypassIps = opts.bypassIps;
+    this.bypass = opts.bypass;
+    this.failClosed = opts.failClosed;
     this.calcKey = opts.calcKey ?? defaultKey;
     this.calcPoints = opts.calcPoints ?? defaultPoints;
   }
@@ -91,17 +68,24 @@ export class RateLimiter implements RateLimiterI {
     ctx: XRPCReqContext,
     opts?: { calcKey?: CalcKeyFn; calcPoints?: CalcPointsFn },
   ): Promise<RateLimiterStatus | RateLimitExceededError | null> {
-    if (
-      this.bypassSecret &&
-      ctx.c.req.header("x-ratelimit-bypass") === this.bypassSecret
-    ) {
-      return null;
+    // Check bypass callback first
+    if (this.bypass) {
+      try {
+        const shouldBypass = await this.bypass(ctx);
+        if (shouldBypass) {
+          return null;
+        }
+      } catch (err) {
+        logger.error(
+          { err },
+          "rate limiter bypass callback failed",
+        );
+        if (this.failClosed) {
+          throw err;
+        }
+      }
     }
-    const ip = ctx.c.req.header("x-forwarded-for")?.split(",")[0] ||
-      ctx.c.req.header("x-real-ip");
-    if (this.bypassIps && ip && this.bypassIps.includes(ip)) {
-      return null;
-    }
+
     const key = opts?.calcKey ? opts.calcKey(ctx) : this.calcKey(ctx);
     if (key === null) {
       return null;

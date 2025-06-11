@@ -7,7 +7,7 @@ import type {
   LexXrpcQuery,
   LexXrpcSubscription,
 } from "@atproto/lexicon";
-import log, { LOGGER_NAME } from "./logger.ts";
+import { logger, LOGGER_NAME } from "./logger.ts";
 import { consumeMany, resetMany } from "./rate-limiter.ts";
 import {
   ErrorFrame,
@@ -151,6 +151,7 @@ export class Server<
     this.app.route("", this.routes);
     this.app.all("/xrpc/:methodId", this.catchall.bind(this));
     this.app.onError(createErrorMiddleware(opts));
+    this.routes.onError(createErrorMiddleware(opts));
     this.options = opts;
     this.middleware = {
       json: { limit: opts?.payload?.jsonLimit },
@@ -576,7 +577,7 @@ export class Server<
         if (!err) {
           throw new InternalServerError();
         } else {
-          throw err;
+          throw XRPCError.fromError(err);
         }
       }
     };
@@ -675,6 +676,8 @@ export class Server<
 
   private setupRouteRateLimits(nsid: string, config: XRPCHandlerConfig) {
     this.routeRateLimiters[nsid] = [];
+
+    // Always apply global rate limits first
     for (const limit of this.globalRateLimiters) {
       this.routeRateLimiters[nsid].push({
         consume: (ctx: XRPCReqContext) => limit.consume(ctx),
@@ -682,11 +685,12 @@ export class Server<
       });
     }
 
+    // Then apply route-specific rate limits if any
     if (config.rateLimit) {
       const limits = Array.isArray(config.rateLimit)
         ? config.rateLimit
         : [config.rateLimit];
-      this.routeRateLimiters[nsid] = [];
+
       for (let i = 0; i < limits.length; i++) {
         const limit = limits[i];
         const { calcKey, calcPoints } = limit;
@@ -818,27 +822,33 @@ function createAuthMiddleware(verifier: AuthVerifier): MiddlewareHandler {
  * @param options - Server options containing error parsing configuration
  * @returns Middleware function that handles errors
  */
-function createErrorMiddleware({
-  errorParser = (err) => XRPCError.fromError(err),
-}: Options) {
-  return (err: Error, c: Context) => {
-    const locals: RequestLocals | undefined = c.get(REQUEST_LOCALS_KEY);
+function createErrorMiddleware(
+  { errorParser = (err: unknown) => XRPCError.fromError(err) },
+) {
+  return (err: unknown, c: Context) => {
+    const locals = c.get(REQUEST_LOCALS_KEY);
     const methodSuffix = locals ? ` method ${locals.nsid}` : "";
 
     const xrpcError = errorParser(err);
-    const logger = isPinoHttpRequest(c.req) ? c.req.log : log;
     const isInternalError = xrpcError instanceof InternalServerError;
-    const isDevelopment = globalThis?.process?.env?.NODE_ENV === "development";
 
-    logger.error(
+    // Use the request's logger (if available) to benefit from request context
+    const reqLogger = isPinoHttpRequest(c.req) ? c.req.log : logger;
+
+    reqLogger.error(
       {
-        err: isInternalError || isDevelopment
+        // Strip stack for expected errors in production
+        err: isInternalError || Deno.env.get("NODE_ENV") === "development"
           ? err
           : toSimplifiedErrorLike(err),
+
+        // XRPC specific properties for easier log browsing
         nsid: locals?.nsid,
         type: xrpcError.type,
         status: xrpcError.statusCode,
         payload: xrpcError.payload,
+
+        // Ensure consistent logger name
         name: LOGGER_NAME,
       },
       isInternalError
@@ -846,12 +856,12 @@ function createErrorMiddleware({
         : `error in xrpc${methodSuffix}`,
     );
 
-    const headers = new Headers({
-      "Content-Type": "application/json; charset=utf-8",
-    });
+    // Return error response with proper status code and JSON payload
     return new Response(JSON.stringify(xrpcError.payload), {
       status: xrpcError.statusCode,
-      headers,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+      },
     });
   };
 }
@@ -887,18 +897,16 @@ function isPinoHttpRequest(req: unknown): req is PinoLike {
  */
 function toSimplifiedErrorLike(err: unknown): unknown {
   if (err instanceof Error) {
-    // Transform into an "ErrorLike" for pino's std "err" serializer
     return {
       ...err,
       // Carry over non-enumerable properties
       message: err.message,
-      name: !Object.prototype.hasOwnProperty.call(err, "name") &&
+      name: !Object.hasOwn(err, "name") &&
           Object.prototype.toString.call(err.constructor) ===
             "[object Function]"
-        ? err.constructor.name // extract the class name for sub-classes of Error
+        ? err.constructor.name // extract class name for Error subclasses
         : err.name,
     };
   }
-
   return err;
 }

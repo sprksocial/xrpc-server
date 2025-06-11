@@ -135,7 +135,8 @@ Deno.test({
       rateLimits: {
         creator: (opts: xrpcServer.RateLimiterOpts) =>
           RateLimiter.memory({
-            bypassSecret: "bypass",
+            bypass: (ctx) =>
+              ctx.c.req.header("x-ratelimit-bypass") === "bypass",
             ...opts,
           }),
         shared: [

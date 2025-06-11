@@ -367,16 +367,28 @@ export const parseReqNsid = (
 export const parseUrlNsid = (url: string): string => {
   // /!\ Hot path
 
+  console.log("parseUrlNsid", url);
+
+  // Extract path from full URL if needed
+  let path = url;
+  try {
+    const urlObj = new URL(url);
+    path = urlObj.pathname;
+  } catch {
+    // If URL parsing fails, assume it's already a path
+  }
+
   if (
     // Ordered by likelihood of failure
-    url.length <= 6 ||
-    url[5] !== "/" ||
-    url[4] !== "c" ||
-    url[3] !== "p" ||
-    url[2] !== "r" ||
-    url[1] !== "x" ||
-    url[0] !== "/"
+    path.length <= 6 ||
+    path[5] !== "/" ||
+    path[4] !== "c" ||
+    path[3] !== "p" ||
+    path[2] !== "r" ||
+    path[1] !== "x" ||
+    path[0] !== "/"
   ) {
+    console.log("invalid xrpc path 6", path);
     throw new InvalidRequestError("invalid xrpc path");
   }
 
@@ -385,8 +397,8 @@ export const parseUrlNsid = (url: string): string => {
   let curr = startOfNsid;
   let char: number;
   let alphaNumRequired = true;
-  for (; curr < url.length; curr++) {
-    char = url.charCodeAt(curr);
+  for (; curr < path.length; curr++) {
+    char = path.charCodeAt(curr);
     if (
       (char >= 48 && char <= 57) || // 0-9
       (char >= 65 && char <= 90) || // A-Z
@@ -395,33 +407,38 @@ export const parseUrlNsid = (url: string): string => {
       alphaNumRequired = false;
     } else if (char === 45 /* "-" */ || char === 46 /* "." */) {
       if (alphaNumRequired) {
+        console.log("invalid xrpc path 5", path);
         throw new InvalidRequestError("invalid xrpc path");
       }
       alphaNumRequired = true;
     } else if (char === 47 /* "/" */) {
       // Allow trailing slash (next char is either EOS or "?")
-      if (curr === url.length - 1 || url.charCodeAt(curr + 1) === 63) {
+      if (curr === path.length - 1 || path.charCodeAt(curr + 1) === 63) {
         break;
       }
+      console.log("invalid xrpc path 4", path);
       throw new InvalidRequestError("invalid xrpc path");
     } else if (char === 63 /* "?"" */) {
       break;
     } else {
+      console.log("invalid xrpc path 3", path);
       throw new InvalidRequestError("invalid xrpc path");
     }
   }
 
   // last char was one of: '-', '.', '/'
   if (alphaNumRequired) {
+    console.log("invalid xrpc path 2", path);
     throw new InvalidRequestError("invalid xrpc path");
   }
 
   // A domain name consists of minimum two characters
   if (curr - startOfNsid < 2) {
+    console.log("invalid xrpc path 1", path);
     throw new InvalidRequestError("invalid xrpc path");
   }
 
   // @TODO is there a max ?
 
-  return url.slice(startOfNsid, curr);
+  return path.slice(startOfNsid, curr);
 };

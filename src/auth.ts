@@ -140,7 +140,7 @@ export type VerifySignatureWithKeyFn = (
   msgBytes: Uint8Array,
   sigBytes: Uint8Array,
   alg: string,
-) => Promise<boolean>;
+) => Promise<boolean> | boolean;
 
 /**
  * Verifies a JWT's authenticity and claims.
@@ -227,7 +227,8 @@ export const verifyJwt = async (
       sigBytes,
       alg,
     );
-  } catch {
+  } catch (e) {
+    console.log("error verifying jwt signature", e);
     throw new AuthRequiredError(
       "could not verify jwt signature",
       "BadJwtSignature",

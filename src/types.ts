@@ -910,3 +910,23 @@ export class MethodNotImplementedError extends XRPCError {
     );
   }
 }
+
+/**
+ * Options for rate limiter configuration.
+ * @property {string} keyPrefix - Prefix for rate limit keys
+ * @property {number} durationMs - Duration of the rate limit window in milliseconds
+ * @property {number} points - Maximum points allowed in the window
+ * @property {CalcKeyFn} [calcKey] - Custom function to calculate rate limit keys
+ * @property {CalcPointsFn} [calcPoints] - Custom function to calculate points
+ * @property {(ctx: XRPCReqContext) => boolean | Promise<boolean>} [bypass] - Optional callback to determine if rate limiting should be bypassed
+ * @property {boolean} [failClosed] - Whether to fail closed on errors
+ */
+export type RateLimiterOpts = {
+  keyPrefix: string;
+  durationMs: number;
+  points: number;
+  calcKey?: CalcKeyFn;
+  calcPoints?: CalcPointsFn;
+  bypass?: (ctx: XRPCReqContext) => boolean | Promise<boolean>;
+  failClosed?: boolean;
+};
