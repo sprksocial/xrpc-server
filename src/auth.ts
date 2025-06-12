@@ -227,8 +227,7 @@ export const verifyJwt = async (
       sigBytes,
       alg,
     );
-  } catch (e) {
-    console.log("error verifying jwt signature", e);
+  } catch {
     throw new AuthRequiredError(
       "could not verify jwt signature",
       "BadJwtSignature",

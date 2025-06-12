@@ -365,10 +365,6 @@ export const parseReqNsid = (
  * @returns The extracted NSID
  */
 export const parseUrlNsid = (url: string): string => {
-  // /!\ Hot path
-
-  console.log("parseUrlNsid", url);
-
   // Extract path from full URL if needed
   let path = url;
   try {
@@ -388,7 +384,6 @@ export const parseUrlNsid = (url: string): string => {
     path[1] !== "x" ||
     path[0] !== "/"
   ) {
-    console.log("invalid xrpc path 6", path);
     throw new InvalidRequestError("invalid xrpc path");
   }
 
@@ -407,7 +402,6 @@ export const parseUrlNsid = (url: string): string => {
       alphaNumRequired = false;
     } else if (char === 45 /* "-" */ || char === 46 /* "." */) {
       if (alphaNumRequired) {
-        console.log("invalid xrpc path 5", path);
         throw new InvalidRequestError("invalid xrpc path");
       }
       alphaNumRequired = true;
@@ -416,25 +410,21 @@ export const parseUrlNsid = (url: string): string => {
       if (curr === path.length - 1 || path.charCodeAt(curr + 1) === 63) {
         break;
       }
-      console.log("invalid xrpc path 4", path);
       throw new InvalidRequestError("invalid xrpc path");
     } else if (char === 63 /* "?"" */) {
       break;
     } else {
-      console.log("invalid xrpc path 3", path);
       throw new InvalidRequestError("invalid xrpc path");
     }
   }
 
   // last char was one of: '-', '.', '/'
   if (alphaNumRequired) {
-    console.log("invalid xrpc path 2", path);
     throw new InvalidRequestError("invalid xrpc path");
   }
 
   // A domain name consists of minimum two characters
   if (curr - startOfNsid < 2) {
-    console.log("invalid xrpc path 1", path);
     throw new InvalidRequestError("invalid xrpc path");
   }
 
