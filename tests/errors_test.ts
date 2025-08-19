@@ -2,7 +2,7 @@ import type { LexiconDoc } from "@atproto/lexicon";
 import { XrpcClient, XRPCError, XRPCInvalidResponseError } from "@atproto/xrpc";
 import * as xrpcServer from "../mod.ts";
 import { closeServer, createServer } from "./_util.ts";
-import { assert, assertEquals, assertRejects } from "jsr:@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 
 const UPSTREAM_LEXICONS: LexiconDoc[] = [
   {

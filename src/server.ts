@@ -57,7 +57,7 @@ import {
   WrappedRateLimiter,
   type WrappedRateLimiterOptions,
 } from "@sprk/xrpc-server";
-import { assert } from "jsr:@std/assert";
+import { assert } from "@std/assert";
 
 /**
  * Creates a new XRPC server instance.

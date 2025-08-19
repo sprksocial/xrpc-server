@@ -10,7 +10,7 @@ import {
   assertEquals,
   assertObjectMatch,
   assertRejects,
-} from "jsr:@std/assert";
+} from "@std/assert";
 
 // Web-standard compression helpers
 async function compressData(

@@ -1,5 +1,5 @@
 import { parseUrlNsid } from "../src/util.ts";
-import { assertEquals, assertThrows } from "jsr:@std/assert";
+import { assertEquals, assertThrows } from "@std/assert";
 
 const testValid = (url: string, expected: string) => {
   assertEquals(parseUrlNsid(url), expected);

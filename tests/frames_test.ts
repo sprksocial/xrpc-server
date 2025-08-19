@@ -1,7 +1,7 @@
 import * as cborx from "cbor-x";
 import * as uint8arrays from "uint8arrays";
 import { ErrorFrame, Frame, FrameType, MessageFrame } from "../mod.ts";
-import { assertEquals, assertThrows } from "jsr:@std/assert";
+import { assertEquals, assertThrows } from "@std/assert";
 
 Deno.test({
   name: "Frames",

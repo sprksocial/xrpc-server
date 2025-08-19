@@ -16,7 +16,7 @@ import {
   createServer,
   createStreamBasicAuth,
 } from "./_util.ts";
-import { assertEquals, assertGreater, assertRejects } from "jsr:@std/assert";
+import { assertEquals, assertGreater, assertRejects } from "@std/assert";
 
 const LEXICONS: LexiconDoc[] = [
   {

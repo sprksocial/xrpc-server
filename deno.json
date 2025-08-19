@@ -8,6 +8,7 @@
     "@atproto/crypto": "npm:@atproto/crypto@^0.4.4",
     "@atproto/lexicon": "npm:@atproto/lexicon@^0.4.11",
     "@atproto/xrpc": "npm:@atproto/xrpc@^0.7.0",
+    "@std/assert": "jsr:@std/assert@^1.0.14",
     "@std/encoding": "jsr:@std/encoding@^1.0.10",
     "zod": "jsr:@zod/zod@^4.0.17",
     "cbor-x": "npm:cbor-x@^1.6.0",

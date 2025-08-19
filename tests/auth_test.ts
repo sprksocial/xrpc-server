@@ -15,8 +15,8 @@ import {
   assertEquals,
   assertObjectMatch,
   assertRejects,
-} from "jsr:@std/assert";
-import { encodeBase64 } from "jsr:@std/encoding";
+} from "@std/assert";
+import { encodeBase64 } from "@std/encoding";
 
 const LEXICONS: LexiconDoc[] = [
   {
