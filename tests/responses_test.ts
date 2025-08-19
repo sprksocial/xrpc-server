@@ -55,7 +55,7 @@ Deno.test({
     const client = new XrpcClient(`http://localhost:${port}`, LEXICONS);
 
     try {
-      await Deno.test("returns readable streams of bytes", async () => {
+      Deno.test("returns readable streams of bytes", async () => {
         const res = await client.call("io.example.readableStream", {
           shouldErr: false,
         });
@@ -63,7 +63,7 @@ Deno.test({
         assertEquals(res.data, expected);
       });
 
-      await Deno.test("handles errs on readable streams of bytes", async () => {
+      Deno.test("handles errs on readable streams of bytes", async () => {
         const originalConsoleError = console.error;
         console.error = () => {}; // Suppress expected error log
 

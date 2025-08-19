@@ -1,7 +1,7 @@
 import { cidForCbor } from "@atproto/common";
 import { randomBytes } from "@atproto/crypto";
 import type { LexiconDoc } from "@atproto/lexicon";
-import { ResponseType, XrpcClient } from "@atproto/xrpc";
+import { ResponseType, XrpcClient, XRPCError } from "@atproto/xrpc";
 import * as xrpcServer from "../mod.ts";
 import { logger } from "../src/logger.ts";
 import { closeServer, createServer } from "./_util.ts";
@@ -131,10 +131,10 @@ async function consumeInput(
       }
       return result;
     } catch (err) {
-      if (err instanceof xrpcServer.XRPCError) {
+      if (err instanceof XRPCError) {
         throw err;
       } else {
-        throw new xrpcServer.XRPCError(
+        throw new XRPCError(
           ResponseType.InvalidRequest,
           "unable to read input",
         );
@@ -154,7 +154,7 @@ Deno.test({
     });
     server.method(
       "io.example.validationTest",
-      (ctx: xrpcServer.XRPCReqContext) => {
+      (ctx: xrpcServer.HandlerContext) => {
         if (ctx.input?.body instanceof ReadableStream) {
           throw new Error("Input is readable");
         }
@@ -171,7 +171,7 @@ Deno.test({
     }));
     server.method(
       "io.example.blobTest",
-      async (ctx: xrpcServer.XRPCReqContext) => {
+      async (ctx: xrpcServer.HandlerContext) => {
         const buffer = await consumeInput(
           ctx.input?.body as string | object | ReadableStream,
         );

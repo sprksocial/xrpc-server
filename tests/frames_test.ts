@@ -5,8 +5,8 @@ import { assertEquals, assertThrows } from "jsr:@std/assert";
 
 Deno.test({
   name: "Frames",
-  async fn() {
-    await Deno.test("creates and parses message frame", () => {
+  fn() {
+    Deno.test("creates and parses message frame", () => {
       const messageFrame = new MessageFrame(
         { a: "b", c: [1, 2, 3] },
         { type: "#d" },
@@ -62,7 +62,7 @@ Deno.test({
       assertEquals(parsedFrame.body, messageFrame.body);
     });
 
-    await Deno.test("creates and parses error frame", () => {
+    Deno.test("creates and parses error frame", () => {
       const errorFrame = new ErrorFrame({
         error: "BigOops",
         message: "Something went awry",
@@ -147,7 +147,7 @@ Deno.test({
       assertEquals(parsedFrame.body, errorFrame.body);
     });
 
-    await Deno.test("parsing fails when frame is not CBOR", () => {
+    Deno.test("parsing fails when frame is not CBOR", () => {
       const bytes = new Uint8Array(new TextEncoder().encode("some utf8 bytes"));
       const emptyBytes = new Uint8Array(0);
       assertThrows(
@@ -162,7 +162,7 @@ Deno.test({
       );
     });
 
-    await Deno.test("parsing fails when frame header is malformed", () => {
+    Deno.test("parsing fails when frame header is malformed", () => {
       const bytes = uint8arrays.concat([
         cborx.encode({ op: -2 }), // Unknown op
         cborx.encode({ a: "b", c: [1, 2, 3] }),
@@ -175,7 +175,7 @@ Deno.test({
       );
     });
 
-    await Deno.test("parsing fails when frame is missing body", () => {
+    Deno.test("parsing fails when frame is missing body", () => {
       const messageFrame = new MessageFrame(
         { a: "b", c: [1, 2, 3] },
         { type: "#d" },
@@ -190,7 +190,7 @@ Deno.test({
       );
     });
 
-    await Deno.test("parsing fails when frame has too many data items", () => {
+    Deno.test("parsing fails when frame has too many data items", () => {
       const messageFrame = new MessageFrame(
         { a: "b", c: [1, 2, 3] },
         { type: "#d" },
@@ -208,7 +208,7 @@ Deno.test({
       );
     });
 
-    await Deno.test("parsing fails when error frame has invalid body", () => {
+    Deno.test("parsing fails when error frame has invalid body", () => {
       const errorFrame = new ErrorFrame({ error: "BadOops" });
 
       const bytes = uint8arrays.concat([

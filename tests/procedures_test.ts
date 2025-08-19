@@ -87,22 +87,19 @@ Deno.test({
     const server = xrpcServer.createServer(LEXICONS);
     server.method(
       "io.example.pingOne",
-      (ctx: { params: xrpcServer.Params }) => {
+      (ctx: xrpcServer.HandlerContext) => {
         return { encoding: "text/plain", body: ctx.params.message };
       },
     );
     server.method(
       "io.example.pingTwo",
-      (ctx: { params: xrpcServer.Params; input?: xrpcServer.HandlerInput }) => {
+      (ctx: xrpcServer.HandlerContext) => {
         return { encoding: "text/plain", body: ctx.input?.body };
       },
     );
     server.method(
       "io.example.pingThree",
-      (ctx: {
-        params: xrpcServer.Params;
-        input?: xrpcServer.HandlerInput;
-      }) => {
+      (ctx: xrpcServer.HandlerContext) => {
         return {
           encoding: "application/octet-stream",
           body: ctx.input?.body,
@@ -111,7 +108,7 @@ Deno.test({
     );
     server.method(
       "io.example.pingFour",
-      (ctx: { params: xrpcServer.Params; input?: xrpcServer.HandlerInput }) => {
+      (ctx: xrpcServer.HandlerContext) => {
         const body = ctx.input?.body as { message: string };
         return {
           encoding: "application/json",
@@ -125,7 +122,7 @@ Deno.test({
     const client = new XrpcClient(`http://localhost:${port}`, LEXICONS);
 
     try {
-      await Deno.test("serves requests", async () => {
+      Deno.test("serves requests", async () => {
         const res1 = await client.call("io.example.pingOne", {
           message: "hello world",
         });

@@ -103,7 +103,7 @@ Deno.test({
     const client = new XrpcClient(`http://localhost:${port}`, LEXICONS);
 
     try {
-      await Deno.test("serves requests", async () => {
+      Deno.test("serves requests", async () => {
         const res1 = await client.call("io.example.pingOne", {
           message: "hello world",
         });

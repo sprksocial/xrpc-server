@@ -5,13 +5,6 @@ import * as xrpcServer from "../mod.ts";
 import { closeServer, createServer } from "./_util.ts";
 import { assertEquals, assertExists } from "jsr:@std/assert";
 
-interface IpldInput extends xrpcServer.HandlerInput {
-  body: {
-    cid: unknown;
-    bytes: unknown;
-  };
-}
-
 const LEXICONS: LexiconDoc[] = [
   {
     lexicon: 1,
@@ -60,7 +53,7 @@ Deno.test({
     const s = await createServer(server);
     server.method(
       "io.example.ipld",
-      (ctx: { input?: xrpcServer.HandlerInput }) => {
+      (ctx: xrpcServer.HandlerContext) => {
         const body = ctx.input?.body as { cid: unknown; bytes: unknown };
         const asCid = CID.asCID(body.cid);
         if (!(asCid instanceof CID)) {
@@ -79,7 +72,7 @@ Deno.test({
     const client = new XrpcClient(`http://localhost:${port}`, LEXICONS);
 
     try {
-      await Deno.test("can send and receive ipld vals", async () => {
+      Deno.test("can send and receive ipld vals", async () => {
         const cid = CID.parse(
           "bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a",
         );

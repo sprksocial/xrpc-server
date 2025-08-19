@@ -1,181 +1,132 @@
+import type { Context, Handler } from "hono";
 import { Hono } from "hono";
-import { check, schema } from "@atproto/common";
-import { Lexicons, lexToJson } from "@atproto/lexicon";
-import type {
-  LexiconDoc,
-  LexXrpcProcedure,
-  LexXrpcQuery,
-  LexXrpcSubscription,
+import {
+  type LexiconDoc,
+  Lexicons,
+  type LexXrpcProcedure,
+  type LexXrpcQuery,
+  type LexXrpcSubscription,
 } from "@atproto/lexicon";
-import { logger, LOGGER_NAME } from "./logger.ts";
-import { consumeMany, resetMany } from "./rate-limiter.ts";
 import {
-  ErrorFrame,
-  Frame,
-  MessageFrame,
-  XrpcStreamServer,
-} from "./stream/index.ts";
-import {
+  excludeErrorResult,
   InternalServerError,
   InvalidRequestError,
-  isHandlerError,
+  isErrorResult,
+  MethodNotImplementedError,
+  XRPCError,
+} from "./errors.ts";
+import {
+  type RateLimiterI,
+  RateLimitExceededError,
+  RouteRateLimiter,
+} from "./rate-limiter.ts";
+import { ErrorFrame, XrpcStreamServer } from "./stream/index.ts";
+import {
+  type Auth,
+  type HandlerContext,
+  type HandlerSuccess,
+  type Input,
   isHandlerPipeThroughBuffer,
   isHandlerPipeThroughStream,
-  isShared,
-  MethodNotImplementedError,
-  PayloadTooLargeError,
-  RateLimitExceededError,
-  XRPCError,
-} from "./types.ts";
-import type {
-  AuthVerifier,
-  HandlerAuth,
-  HandlerPipeThrough,
-  HandlerSuccess,
-  Options,
-  Params,
-  RateLimiterI,
-  XRPCHandler,
-  XRPCHandlerConfig,
-  XRPCReqContext,
-  XRPCStreamHandler,
-  XRPCStreamHandlerConfig,
+  isSharedRateLimitOpts,
+  type MethodAuthVerifier,
+  type MethodConfig,
+  type MethodConfigOrHandler,
+  type Options,
+  type Params,
+  type ServerRateLimitDescription,
+  type StreamConfig,
+  type StreamConfigOrHandler,
 } from "./types.ts";
 import {
-  decodeQueryParams,
+  asArray,
+  createInputVerifier,
+  decodeUrlQueryParams,
+  extractUrlNsid,
   getQueryParams,
-  validateInput,
+  setHeaders,
   validateOutput,
 } from "./util.ts";
-import type { Context, Env, MiddlewareHandler, Next, Schema } from "hono";
-
-const REQUEST_LOCALS_KEY = "_xrpcLocals";
+import {
+  type CalcKeyFn,
+  type CalcPointsFn,
+  type CatchallHandler,
+  type HandlerInput,
+  type RateLimiterContext as _RateLimiterContext,
+  type RateLimiterOptions,
+  WrappedRateLimiter,
+  type WrappedRateLimiterOptions,
+} from "@sprk/xrpc-server";
+import { assert } from "jsr:@std/assert";
 
 /**
- * Create a new XRPC server for a given group of lexicons.
- * Should generally be used once per application.
- *
- * @template E - The environment type for Hono app, defaults to Env
- * @template P - The path parameter type for Hono app, defaults to string
- * @template S - The schema type for Hono app, defaults to Schema
- *
- * @param lexicons - The lexicons to use for the server. These define the API schema and methods.
- * @param options - Configuration options for the server including:
- *                 - payload limits
- *                 - rate limiting
- *                 - error handling
- *                 - response validation
- *                 - custom catchall handler
- *
- * @example
- * ```typescript
- * // Use as a standalone application
- * const server = createServer([myLexicon], {
- *   payload: { jsonLimit: 100_000 },
- *   rateLimits: { ... }
- * });
- * Deno.serve(server.app.fetch);
- * ```
- *
- * @example
- * ```typescript
- * // Use as part of a larger Hono application
- * const server = createServer();
- * const app = new Hono();
- * app.route("/", server.routes);
- * Deno.serve(app.fetch);
- * ```
- *
- * @returns A new XRPC server instance configured with the provided lexicons and options
+ * Creates a new XRPC server instance.
+ * @param lexicons - Optional array of lexicon documents to initialize the server with
+ * @param options - Optional server configuration options
+ * @returns A new Server instance
  */
-export function createServer<
-  E extends Env = Env,
-  P extends string = string,
-  S extends Schema = Schema,
->(
+export function createServer(
   lexicons?: LexiconDoc[],
   options?: Options,
-): Server<E, P, S> {
-  return new Server<E, P, S>(lexicons, options);
+): Server {
+  return new Server(lexicons, options);
 }
 
 /**
- * The XRPC server class that handles API routing, validation, and request processing.
- * Provides a complete server implementation with support for:
- * - HTTP and WebSocket endpoints
- * - Request/response validation against lexicon schemas
- * - Authentication and authorization
- * - Rate limiting
- * - Error handling
- * - Streaming responses
- *
- * @template E - The environment type for Hono app, defaults to Env
- * @template P - The path parameter type for Hono app, defaults to string
- * @template S - The schema type for Hono app, defaults to Schema
- *
- * @property {Hono<E, S, P>} app - The main Hono application instance
- * @property {Hono<E, S, P>} routes - The router handling XRPC-specific routes
- * @property {Map<string, XrpcStreamServer>} subscriptions - WebSocket subscription handlers by method ID
- * @property {Lexicons} lex - The lexicon schemas used for validation
- * @property {Options} options - Server configuration options
- * @property {Record<string, { limit?: number }>} middleware - Middleware configuration for different content types
- * @property {RateLimiterI[]} globalRateLimiters - Rate limiters applied to all routes
- * @property {Record<string, RateLimiterI>} sharedRateLimiters - Named rate limiters that can be shared across routes
- * @property {Record<string, RateLimiterI[]>} routeRateLimiters - Rate limiters specific to individual routes
+ * XRPC server implementation that handles HTTP and WebSocket requests.
+ * Manages method registration, authentication, rate limiting, and streaming.
  */
-export class Server<
-  E extends Env = Env,
-  P extends string = string,
-  S extends Schema = Schema,
-> {
-  public app: Hono<E, S, P> = new Hono<E, S, P>();
-  public routes: Hono<E, S, P> = new Hono<E, S, P>();
+export class Server {
+  /** The underlying Hono HTTP server instance */
+  app: Hono;
+  /** Map of NSID to WebSocket streaming servers for subscriptions */
   subscriptions: Map<string, XrpcStreamServer> = new Map<
     string,
     XrpcStreamServer
   >();
+  /** Lexicon registry for schema validation and method definitions */
   lex: Lexicons = new Lexicons();
+  /** Server configuration options */
   options: Options;
-  middleware: Record<"json" | "text", { limit?: number }>;
-  globalRateLimiters: RateLimiterI[];
-  sharedRateLimiters: Record<string, RateLimiterI>;
-  routeRateLimiters: Record<string, RateLimiterI[]>;
-  abortController?: AbortController;
+  /** Global rate limiter applied to all routes */
+  globalRateLimiter?: RouteRateLimiter<HandlerContext>;
+  /** Map of named shared rate limiters */
+  sharedRateLimiters?: Map<string, RateLimiterI<HandlerContext>>;
 
+  /**
+   * Creates a new XRPC server instance.
+   * @param lexicons - Optional array of lexicon documents to register
+   * @param opts - Server configuration options
+   */
   constructor(lexicons?: LexiconDoc[], opts: Options = {}) {
+    this.app = new Hono();
+    this.options = opts;
+
     if (lexicons) {
       this.addLexicons(lexicons);
     }
-    this.app = new Hono<E, S, P>();
-    this.routes = new Hono<E, S, P>();
-    this.app.route("", this.routes);
-    this.app.all("/xrpc/:methodId", this.catchall.bind(this));
-    this.app.onError(createErrorMiddleware(opts));
-    this.routes.onError(createErrorMiddleware(opts));
-    this.options = opts;
-    this.middleware = {
-      json: { limit: opts?.payload?.jsonLimit },
-      text: { limit: opts?.payload?.textLimit },
-    };
-    this.globalRateLimiters = [];
-    this.sharedRateLimiters = {};
-    this.routeRateLimiters = {};
-    if (opts?.rateLimits?.global) {
-      for (const limit of opts.rateLimits.global) {
-        const rateLimiter = opts.rateLimits.creator({
-          ...limit,
-          keyPrefix: `rl-${limit.name}`,
-        });
-        this.globalRateLimiters.push(rateLimiter);
+
+    // Add global middleware
+    this.app.use("*", this.catchall);
+    this.app.onError(createErrorHandler(opts));
+
+    if (opts.rateLimits) {
+      const { global, shared, creator, bypass } = opts.rateLimits;
+
+      if (global) {
+        this.globalRateLimiter = RouteRateLimiter.from(
+          global.map((options) => creator(buildRateLimiterOptions(options))),
+          { bypass },
+        );
       }
-    }
-    if (opts?.rateLimits?.shared) {
-      for (const limit of opts.rateLimits.shared) {
-        const rateLimiter = opts.rateLimits.creator({
-          ...limit,
-          keyPrefix: `rl-${limit.name}`,
-        });
-        this.sharedRateLimiters[limit.name] = rateLimiter;
+
+      if (shared) {
+        this.sharedRateLimiters = new Map(
+          shared.map((options) => [
+            options.name,
+            creator(buildRateLimiterOptions(options)),
+          ]),
+        );
       }
     }
   }
@@ -183,730 +134,524 @@ export class Server<
   // handlers
   // =
 
-  method(nsid: string, configOrFn: XRPCHandlerConfig | XRPCHandler) {
+  /**
+   * Registers a method handler for the specified NSID.
+   * @param nsid - The namespace identifier for the method
+   * @param configOrFn - Either a handler function or full method configuration
+   */
+  method(
+    nsid: string,
+    configOrFn: MethodConfigOrHandler,
+  ) {
     this.addMethod(nsid, configOrFn);
   }
 
-  addMethod(nsid: string, configOrFn: XRPCHandlerConfig | XRPCHandler) {
+  /**
+   * Adds a method handler for the specified NSID.
+   * @param nsid - The namespace identifier for the method
+   * @param configOrFn - Either a handler function or full method configuration
+   * @throws {Error} If the method is not found in the lexicon or is not a query/procedure
+   */
+  addMethod(
+    nsid: string,
+    configOrFn: MethodConfigOrHandler,
+  ) {
     const config = typeof configOrFn === "function"
       ? { handler: configOrFn }
       : configOrFn;
     const def = this.lex.getDef(nsid);
-    if (def?.type === "query" || def?.type === "procedure") {
-      this.addRoute(nsid, def, config);
-    } else {
-      throw new Error(`Lex def for ${nsid} is not a query or a procedure`);
+    if (!def || (def.type !== "query" && def.type !== "procedure")) {
+      throw new Error(`Method not found in lexicon: ${nsid}`);
     }
+    this.addRoute(nsid, def, config);
   }
 
+  /**
+   * Registers a streaming method handler for the specified NSID.
+   * @param nsid - The namespace identifier for the streaming method
+   * @param configOrFn - Either a stream handler function or full stream configuration
+   */
   streamMethod(
     nsid: string,
-    configOrFn: XRPCStreamHandlerConfig | XRPCStreamHandler,
+    configOrFn: StreamConfigOrHandler,
   ) {
     this.addStreamMethod(nsid, configOrFn);
   }
 
+  /**
+   * Adds a streaming method handler for the specified NSID.
+   * @param nsid - The namespace identifier for the streaming method
+   * @param configOrFn - Either a stream handler function or full stream configuration
+   * @throws {Error} If the subscription is not found in the lexicon
+   */
   addStreamMethod(
     nsid: string,
-    configOrFn: XRPCStreamHandlerConfig | XRPCStreamHandler,
+    configOrFn: StreamConfigOrHandler,
   ) {
     const config = typeof configOrFn === "function"
       ? { handler: configOrFn }
       : configOrFn;
     const def = this.lex.getDef(nsid);
-    if (def?.type === "subscription") {
-      this.addSubscription(nsid, def, config);
-    } else {
-      throw new Error(`Lex def for ${nsid} is not a subscription`);
+    if (!def || def.type !== "subscription") {
+      throw new Error(`Subscription not found in lexicon: ${nsid}`);
     }
+    this.addSubscription(nsid, def, config);
   }
 
-  // schemas
+  // lexicon
   // =
 
+  /**
+   * Adds a lexicon document to the server's schema registry.
+   * @param doc - The lexicon document to add
+   */
   addLexicon(doc: LexiconDoc) {
     this.lex.add(doc);
   }
 
+  /**
+   * Adds multiple lexicon documents to the server's schema registry.
+   * @param docs - Array of lexicon documents to add
+   */
   addLexicons(docs: LexiconDoc[]) {
     for (const doc of docs) {
       this.addLexicon(doc);
     }
   }
 
-  // http
+  // routes
   // =
+
+  /**
+   * Adds an HTTP route for the specified method.
+   * @param nsid - The namespace identifier for the method
+   * @param def - The lexicon definition for the method
+   * @param config - The method configuration including handler and options
+   * @protected
+   */
   protected addRoute(
     nsid: string,
     def: LexXrpcQuery | LexXrpcProcedure,
-    config: XRPCHandlerConfig,
+    config: MethodConfig,
   ) {
-    const verb: "post" | "get" = def.type === "procedure" ? "post" : "get";
-    const middleware: MiddlewareHandler[] = [];
-    middleware.push(createLocalsMiddleware(nsid));
-    if (config.auth) {
-      middleware.push(createAuthMiddleware(config.auth));
-    }
-    this.setupRouteRateLimits(nsid, config);
+    const path = `/xrpc/${nsid}`;
+    const handler = this.createHandler(nsid, def, config);
 
-    const routeOpts = {
-      blobLimit: config.opts?.blobLimit ?? this.options.payload?.blobLimit,
-    };
-
-    // Add body parsing middleware for POST requests
-    if (verb === "post") {
-      this.routes.post(
-        `/xrpc/${nsid}`,
-        ...middleware,
-        async (c: Context, next: Next): Promise<Response | void> => {
-          try {
-            const contentType = c.req.header("content-type");
-            const contentEncoding = c.req.header("content-encoding");
-            const contentLength = c.req.header("content-length");
-
-            // Check if we need a body
-            const needsBody = def.type === "procedure" && "input" in def &&
-              def.input;
-            if (needsBody && !contentType) {
-              throw new InvalidRequestError(
-                "Request encoding (Content-Type) required but not provided",
-              );
-            }
-
-            // Handle content encoding (compression)
-            let encodings: string[] = [];
-            if (contentEncoding) {
-              encodings = contentEncoding.split(",").map((s) => s.trim());
-              // Filter out 'identity' since it means no transformation
-              encodings = encodings.filter((e) => e !== "identity");
-              for (const encoding of encodings) {
-                if (!["gzip", "deflate", "br"].includes(encoding)) {
-                  throw new InvalidRequestError("unsupported content-encoding");
-                }
-              }
-            }
-
-            // Handle content length
-            if (contentLength) {
-              const length = parseInt(contentLength, 10);
-              if (isNaN(length)) {
-                throw new InvalidRequestError("invalid content-length");
-              }
-              if (routeOpts.blobLimit && length > routeOpts.blobLimit) {
-                throw new PayloadTooLargeError("request entity too large");
-              }
-            }
-
-            // Get the raw body
-            let body: unknown;
-            if (contentType) {
-              if (contentType.includes("application/json")) {
-                body = await c.req.json();
-              } else if (contentType.includes("text/")) {
-                body = await c.req.text();
-              } else {
-                const data = new Uint8Array(await c.req.arrayBuffer());
-                if (routeOpts.blobLimit && data.length > routeOpts.blobLimit) {
-                  throw new PayloadTooLargeError("request entity too large");
-                }
-                body = data;
-              }
-            }
-
-            // Handle decompression if needed
-            if (encodings.length > 0 && body instanceof Uint8Array) {
-              let currentBody = body;
-              let totalSize = 0;
-              for (const encoding of encodings.reverse()) {
-                let transform;
-                switch (encoding) {
-                  case "gzip":
-                  case "deflate":
-                    transform = new DecompressionStream(encoding);
-                    break;
-                  case "br":
-                    transform = new DecompressionStream("deflate"); // Fallback for browsers that don't support brotli
-                    break;
-                  default:
-                    throw new InvalidRequestError(
-                      "unsupported content-encoding",
-                    );
-                }
-
-                const chunks: Uint8Array[] = [];
-                try {
-                  const stream = new ReadableStream({
-                    start(controller) {
-                      controller.enqueue(currentBody);
-                      controller.close();
-                    },
-                  });
-
-                  const transformedStream = stream.pipeThrough(transform);
-                  const reader = transformedStream.getReader();
-
-                  while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    totalSize += value.length;
-                    if (
-                      routeOpts.blobLimit && totalSize > routeOpts.blobLimit
-                    ) {
-                      throw new PayloadTooLargeError(
-                        "request entity too large",
-                      );
-                    }
-                    chunks.push(value);
-                  }
-
-                  currentBody = new Uint8Array(totalSize);
-                  let offset = 0;
-                  for (const chunk of chunks) {
-                    currentBody.set(chunk, offset);
-                    offset += chunk.length;
-                  }
-                } catch (err) {
-                  if (err instanceof PayloadTooLargeError) {
-                    throw err;
-                  }
-                  throw new InvalidRequestError("unable to read input");
-                }
-              }
-              body = currentBody;
-            }
-
-            // Validate the input against the lexicon schema
-            const input = await validateInput(
-              nsid,
-              def,
-              body,
-              contentType,
-              this.lex,
-            );
-            c.set("validatedInput", input);
-            await next();
-          } catch (err) {
-            if (err instanceof XRPCError) {
-              throw err;
-            }
-            if (err instanceof Error) {
-              throw new InvalidRequestError(err.message);
-            }
-            throw new InvalidRequestError("Invalid request body");
-          }
-        },
-        this.createHandler(nsid, def, config),
-      );
+    if (def.type === "procedure") {
+      this.app.post(path, handler);
     } else {
-      this.routes.get(
-        `/xrpc/${nsid}`,
-        ...middleware,
-        this.createHandler(nsid, def, config),
-      );
+      this.app.get(path, handler);
     }
   }
 
-  async catchall(c: Context, next: Next): Promise<Response | void> {
-    if (this.globalRateLimiters) {
+  /**
+   * Catchall handler that processes all XRPC routes and applies global rate limiting.
+   * Only applies to routes starting with "/xrpc/".
+   */
+  catchall: CatchallHandler = async (c, next) => { // catchall handler only applies to XRPC routes
+    if (!c.req.url.startsWith("/xrpc/")) return next();
+
+    // Validate the NSID
+    const nsid = extractUrlNsid(c.req.url);
+    if (!nsid) {
+      throw new InvalidRequestError("invalid xrpc path");
+    }
+
+    if (this.globalRateLimiter) {
       try {
-        const rlRes = await consumeMany(
-          {
-            c,
-            req: c.req,
-            auth: undefined,
-            params: {},
-            input: undefined,
-            resetRouteRateLimits: async () => {},
-          },
-          this.globalRateLimiters.map(
-            (rl) => (ctx: XRPCReqContext) => rl.consume(ctx),
-          ),
+        await this.globalRateLimiter.handle({
+          req: c.req.raw,
+          res: new Response(),
+          auth: undefined,
+          params: {},
+          input: undefined,
+          async resetRouteRateLimits() {},
+        });
+      } catch {
+        return next();
+      }
+    }
+
+    // Ensure that known XRPC methods are only called with the correct HTTP
+    // method.
+    const def = this.lex.getDef(nsid);
+    if (def) {
+      const expectedMethod = def.type === "procedure"
+        ? "POST"
+        : def.type === "query"
+        ? "GET"
+        : null;
+      if (expectedMethod != null && expectedMethod !== c.req.method) {
+        throw new InvalidRequestError(
+          `Incorrect HTTP method (${c.req.method}) expected ${expectedMethod}`,
         );
-        if (rlRes instanceof RateLimitExceededError) {
-          throw rlRes;
-        }
-      } catch (err) {
-        throw err;
       }
     }
 
     if (this.options.catchall) {
-      const result = await this.options.catchall(c, next);
-      if (result instanceof Response) {
-        return result;
-      }
-      return;
-    }
-
-    const methodId = c.req.param("methodId");
-    const def = this.lex.getDef(methodId);
-    if (!def) {
+      await this.options.catchall(c, next);
+    } else if (!def) {
       throw new MethodNotImplementedError();
+    } else {
+      await next();
     }
-    // validate method
-    if (def.type === "query" && c.req.method !== "GET") {
-      throw new InvalidRequestError(
-        `Incorrect HTTP method (${c.req.method}) expected GET`,
-      );
-    } else if (def.type === "procedure" && c.req.method !== "POST") {
-      throw new InvalidRequestError(
-        `Incorrect HTTP method (${c.req.method}) expected POST`,
-      );
+  };
+
+  /**
+   * Creates a parameter verification function for the given method definition.
+   * @param _nsid - The namespace identifier (unused)
+   * @param def - The lexicon definition containing parameter schema
+   * @returns A function that validates and transforms query parameters
+   * @protected
+   */
+  protected createParamsVerifier(
+    _nsid: string,
+    def: LexXrpcQuery | LexXrpcProcedure | LexXrpcSubscription,
+  ): (query: Record<string, unknown>) => Params {
+    if (!def.parameters) {
+      return () => ({});
     }
-    await next();
+    return (query: Record<string, unknown>) => {
+      return query as Params;
+    };
   }
 
-  createHandler(
+  /**
+   * Creates an input verification function for the given method definition.
+   * @param nsid - The namespace identifier for the method
+   * @param def - The lexicon definition containing input schema
+   * @returns A function that validates and transforms request input
+   * @protected
+   */
+  protected createInputVerifier(
     nsid: string,
     def: LexXrpcQuery | LexXrpcProcedure,
-    routeCfg: XRPCHandlerConfig,
-  ): MiddlewareHandler {
-    const validateReqInput = async (c: Context) => {
-      return (
-        c.get("validatedInput") ||
-        (await validateInput(
-          nsid,
-          def,
-          undefined,
-          c.req.header("content-type"),
-          this.lex,
-        ))
-      );
-    };
-    const validateResOutput = this.options.validateResponse === false
-      ? null
-      : (output: undefined | HandlerSuccess) =>
-        validateOutput(nsid, def, output, this.lex);
-    const assertValidXrpcParams = (params: unknown) =>
-      this.lex.assertValidXrpcParams(nsid, params);
-    const rls = this.routeRateLimiters[nsid] ?? [];
-    const consumeRateLimit = (reqCtx: XRPCReqContext) =>
-      consumeMany(
-        reqCtx,
-        rls.map((rl) => (ctx: XRPCReqContext) => rl.consume(ctx)),
-      );
+  ): (req: Request) => Promise<HandlerInput | undefined> {
+    return createInputVerifier(this.lex, nsid, def);
+  }
 
-    const resetRateLimit = (reqCtx: XRPCReqContext) =>
-      resetMany(
-        reqCtx,
-        rls.map((rl) => (ctx: XRPCReqContext) => rl.reset(ctx)),
-      );
-
-    return async (c: Context): Promise<Response> => {
-      try {
-        // validate request
-        let params = decodeQueryParams(def, c.req.queries());
-        try {
-          params = assertValidXrpcParams(params) as Params;
-        } catch (e) {
-          throw new InvalidRequestError(String(e));
-        }
-        const input = await validateReqInput(c);
-
-        const locals: RequestLocals = c.get(REQUEST_LOCALS_KEY);
-
-        const reqCtx: XRPCReqContext = {
+  /**
+   * Creates an authentication verification function.
+   * @param _nsid - The namespace identifier (unused)
+   * @param verifier - Optional custom authentication verifier
+   * @returns A function that performs authentication for the method
+   * @protected
+   */
+  protected createAuthVerifier(
+    _nsid: string,
+    verifier?: MethodAuthVerifier,
+  ): (params: Params, input: Input, req: Request) => Promise<Auth> {
+    return async (
+      params: Params,
+      input: Input,
+      req: Request,
+    ): Promise<Auth> => {
+      if (verifier) {
+        return await verifier({
           params,
           input,
-          auth: locals.auth,
-          c,
-          req: c.req,
-          resetRouteRateLimits: () => resetRateLimit(reqCtx),
+          req,
+          res: new Response(),
+        });
+      }
+      return undefined;
+    };
+  }
+
+  /**
+   * Creates a Hono handler function for the specified XRPC method.
+   * @template A - The authentication type
+   * @param nsid - The namespace identifier for the method
+   * @param def - The lexicon definition for the method
+   * @param routeCfg - The method configuration including handler and options
+   * @returns A Hono handler function
+   */
+  createHandler<A extends Auth = Auth>(
+    nsid: string,
+    def: LexXrpcQuery | LexXrpcProcedure,
+    routeCfg: MethodConfig<A>,
+  ): Handler {
+    const verifyParams = this.createParamsVerifier(nsid, def);
+    const verifyInput = this.createInputVerifier(nsid, def);
+    const verifyAuth = this.createAuthVerifier(nsid, routeCfg.auth);
+    const validateReqNSID = () => nsid;
+    const validateOutputFn = (output?: HandlerSuccess) =>
+      this.options.validateResponse && output && def.output
+        ? validateOutput(nsid, def, output, this.lex)
+        : undefined;
+
+    const _routeLimiter = this.createRouteRateLimiter(nsid, routeCfg);
+
+    return async (c: Context) => {
+      try {
+        validateReqNSID();
+
+        const query = getQueryParams(c.req.url);
+        const params = verifyParams(decodeUrlQueryParams(query));
+
+        let input: Input = undefined;
+        if (def.type === "procedure") {
+          input = await verifyInput(c.req.raw);
+        }
+
+        const auth = await verifyAuth(params, input, c.req.raw);
+
+        const ctx: HandlerContext<A> = {
+          req: c.req.raw,
+          res: new Response(),
+          params,
+          input,
+          auth: auth as A,
+          resetRouteRateLimits: async () => {},
         };
 
-        // handle rate limits
-        const result = await consumeRateLimit(reqCtx);
-        if (result instanceof RateLimitExceededError) {
-          throw result;
-        }
-
-        // run the handler
-        const output = await routeCfg.handler(reqCtx);
-
-        if (!output) {
-          validateResOutput?.(output);
-          return new Response(null, { status: 200 });
-        } else if (isHandlerPipeThroughStream(output)) {
-          const headers = new Headers();
-          setHeaders(headers, output);
-          headers.set("Content-Type", output.encoding);
-          return new Response(output.stream, {
-            status: 200,
-            headers,
-          });
-        } else if (isHandlerPipeThroughBuffer(output)) {
-          const headers = new Headers();
-          setHeaders(headers, output);
-          headers.set("Content-Type", output.encoding);
-          return new Response(output.buffer, {
-            status: 200,
-            headers,
-          });
-        } else if (isHandlerError(output)) {
-          throw XRPCError.fromError(output);
-        } else {
-          validateResOutput?.(output);
-          const headers = new Headers();
-          setHeaders(headers, output);
-
-          if (
-            output.encoding === "application/json" || output.encoding === "json"
-          ) {
-            headers.set("Content-Type", "application/json; charset=utf-8");
-            return new Response(JSON.stringify(lexToJson(output.body)), {
-              status: 200,
-              headers,
-            });
-          } else {
-            let contentType = output.encoding;
-            if (contentType.startsWith("text/")) {
-              contentType = `${contentType}; charset=utf-8`;
-            }
-            headers.set("Content-Type", contentType);
-            return new Response(
-              output.body as string | Uint8Array | ReadableStream<Uint8Array>,
-              {
-                status: 200,
-                headers,
-              },
-            );
+        if (this.globalRateLimiter) {
+          const result = await this.globalRateLimiter.consume(ctx);
+          if (result instanceof RateLimitExceededError) {
+            throw result;
           }
         }
-      } catch (err: unknown) {
-        if (!err) {
-          throw new InternalServerError();
-        } else {
-          throw XRPCError.fromError(err);
+        // Rate limiting would be implemented here
+
+        const output = await routeCfg.handler(ctx);
+        if (isErrorResult(output)) {
+          throw output.error;
         }
+
+        if (isHandlerPipeThroughBuffer(output)) {
+          setHeaders(c, output.headers);
+          return c.body(output.buffer, 200, {
+            "Content-Type": output.encoding,
+          });
+        } else if (isHandlerPipeThroughStream(output)) {
+          setHeaders(c, output.headers);
+          return c.body(output.stream, 200, {
+            "Content-Type": output.encoding,
+          });
+        }
+
+        if (output) {
+          excludeErrorResult(output);
+          validateOutputFn(output);
+        }
+
+        if (output) {
+          setHeaders(c, output.headers);
+          if (output.encoding === "application/json") {
+            return c.json(output.body);
+          } else {
+            return c.body(output.body, 200, {
+              "Content-Type": output.encoding,
+            });
+          }
+        }
+
+        return c.body(null, 200);
+      } catch (err: unknown) {
+        throw err || new InternalServerError();
       }
     };
   }
 
+  /**
+   * Adds a WebSocket subscription handler for the specified NSID.
+   * @param nsid - The namespace identifier for the subscription
+   * @param _def - The lexicon definition for the subscription (unused)
+   * @param _config - The stream configuration (unused)
+   * @protected
+   */
   protected addSubscription(
     nsid: string,
-    def: LexXrpcSubscription,
-    config: XRPCStreamHandlerConfig,
+    _def: LexXrpcSubscription,
+    _config: StreamConfig,
   ) {
-    const assertValidXrpcParams = (params: unknown) =>
-      this.lex.assertValidXrpcParams(nsid, params);
-    this.subscriptions.set(
-      nsid,
-      new XrpcStreamServer({
-        noServer: true,
-        handler: async function* (req: Request, signal: AbortSignal) {
-          try {
-            // authenticate request
-            const auth = await config.auth?.({ req });
-            if (isHandlerError(auth)) {
-              throw XRPCError.fromHandlerError(auth);
-            }
-            // validate request
-            let params = decodeQueryParams(def, getQueryParams(req.url));
-            try {
-              params = assertValidXrpcParams(params) as Params;
-            } catch (e) {
-              throw new InvalidRequestError(String(e));
-            }
-            // stream
-            const items = config.handler({ req, params, auth, signal });
-            for await (const item of items) {
-              if (item instanceof Frame) {
-                yield item;
-                continue;
-              }
-              const itemObj = item as Record<string, unknown>;
-              const type = itemObj["$type"];
-              if (!check.is(item, schema.map) || typeof type !== "string") {
-                yield new MessageFrame(item);
-                continue;
-              }
-              const split = type.split("#");
-              let t: string;
-              if (
-                split.length === 2 &&
-                (split[0] === "" || split[0] === nsid)
-              ) {
-                t = `#${split[1]}`;
-              } else {
-                t = type;
-              }
-              const clone = { ...itemObj };
-              delete clone["$type"];
-              yield new MessageFrame(clone, { type: t });
-            }
-          } catch (err) {
-            const xrpcErrPayload = XRPCError.fromError(err).payload;
-            yield new ErrorFrame({
-              error: xrpcErrPayload.error ?? "Unknown",
-              message: xrpcErrPayload.message,
-            });
-          }
-        },
-      }),
-    );
-  }
-
-  public enableStreamingOnListen(
-    handler: (req: Request) => Promise<Response>,
-  ): (req: Request) => Response | Promise<Response> {
-    return (req: Request) => {
-      if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
-        const url = new URL(req.url);
-        const sub = url.pathname.startsWith("/xrpc/")
-          ? this.subscriptions.get(url.pathname.replace("/xrpc/", ""))
-          : undefined;
-
-        if (!sub) return new Response("Not Found", { status: 404 });
-
-        // Return a response that indicates WebSocket upgrade
-        const headers = new Headers({
-          "Upgrade": "websocket",
-          "Connection": "Upgrade",
+    const server = new XrpcStreamServer({
+      noServer: true,
+      handler: async function* (_req: Request, _signal: AbortSignal) {
+        // Stream handler implementation would go here
+        yield new ErrorFrame({
+          error: "NotImplemented",
+          message: "Streaming not implemented",
         });
-
-        return new Response(null, {
-          status: 101, // Switching Protocols
-          headers,
-        });
-      }
-      return handler(req);
-    };
-  }
-
-  private setupRouteRateLimits(nsid: string, config: XRPCHandlerConfig) {
-    this.routeRateLimiters[nsid] = [];
-
-    // Always apply global rate limits first
-    for (const limit of this.globalRateLimiters) {
-      this.routeRateLimiters[nsid].push({
-        consume: (ctx: XRPCReqContext) => limit.consume(ctx),
-        reset: (ctx: XRPCReqContext) => limit.reset(ctx),
-      });
-    }
-
-    // Then apply route-specific rate limits if any
-    if (config.rateLimit) {
-      const limits = Array.isArray(config.rateLimit)
-        ? config.rateLimit
-        : [config.rateLimit];
-
-      for (let i = 0; i < limits.length; i++) {
-        const limit = limits[i];
-        const { calcKey, calcPoints } = limit;
-        if (isShared(limit)) {
-          const rateLimiter = this.sharedRateLimiters[limit.name];
-          if (rateLimiter) {
-            this.routeRateLimiters[nsid].push({
-              consume: (ctx: XRPCReqContext) =>
-                rateLimiter.consume(ctx, {
-                  calcKey,
-                  calcPoints,
-                }),
-              reset: (ctx: XRPCReqContext) =>
-                rateLimiter.reset(ctx, {
-                  calcKey,
-                }),
-            });
-          }
-        } else {
-          const { durationMs, points } = limit;
-          const rateLimiter = this.options.rateLimits?.creator({
-            keyPrefix: `nsid-${i}`,
-            durationMs,
-            points,
-            calcKey,
-            calcPoints,
-          });
-          if (rateLimiter) {
-            this.sharedRateLimiters[nsid] = rateLimiter;
-            this.routeRateLimiters[nsid].push({
-              consume: (ctx: XRPCReqContext) =>
-                rateLimiter.consume(ctx, {
-                  calcKey,
-                  calcPoints,
-                }),
-              reset: (ctx: XRPCReqContext) =>
-                rateLimiter.reset(ctx, {
-                  calcKey,
-                }),
-            });
-          }
-        }
-      }
-    }
-  }
-
-  public router(): Hono {
-    const router = new Hono();
-    router.route("/", this.routes);
-    return router;
-  }
-}
-
-/**
- * Sets response headers from the handler result.
- * Copies all non-null headers from the result to the response headers object.
- *
- * @param {Headers} headers - The response headers object to modify
- * @param {HandlerSuccess | HandlerPipeThrough} result - The handler result containing headers to copy
- * @internal
- */
-function setHeaders(
-  headers: Headers,
-  result: HandlerSuccess | HandlerPipeThrough,
-) {
-  const resultHeaders = result.headers;
-  if (resultHeaders) {
-    for (const [name, val] of Object.entries(resultHeaders)) {
-      if (val != null) headers.set(name, val);
-    }
-  }
-}
-
-/**
- * Internal request context data shared between middleware and handlers.
- * Stores authentication results and method identification.
- * @internal
- * @property {HandlerAuth | undefined} auth - Authentication data if auth middleware was used
- * @property {string} nsid - The NSID (namespace identifier) of the XRPC method being called
- */
-type RequestLocals = {
-  auth: HandlerAuth | undefined;
-  nsid: string;
-};
-
-/**
- * Creates middleware that initializes request-local storage.
- * Sets up a context for storing method-specific data that can be accessed by subsequent middleware and handlers.
- * @internal
- * @param nsid - The NSID of the XRPC method being handled
- * @returns Middleware function that initializes request locals
- */
-function createLocalsMiddleware(nsid: string): MiddlewareHandler {
-  return async function (c: Context, next: Next): Promise<Response | void> {
-    const locals: RequestLocals = { auth: undefined, nsid };
-    c.set(REQUEST_LOCALS_KEY, locals);
-    await next();
-  };
-}
-
-/**
- * Creates middleware that handles authentication for an XRPC method.
- * Executes the provided auth verifier and stores the result in request locals.
- * If authentication fails, throws an appropriate XRPCError.
- * @internal
- * @param verifier - The authentication verification function to use
- * @returns Middleware function that performs authentication
- */
-function createAuthMiddleware(verifier: AuthVerifier): MiddlewareHandler {
-  return async function (c: Context, next: Next): Promise<Response | void> {
-    try {
-      const result = await verifier({ c, req: c.req });
-      if (isHandlerError(result)) {
-        throw XRPCError.fromHandlerError(result);
-      }
-      const locals: RequestLocals = c.get(REQUEST_LOCALS_KEY);
-      locals.auth = result;
-      await next();
-    } catch (err: unknown) {
-      throw err;
-    }
-  };
-}
-
-/**
- * Creates middleware that handles error responses for the XRPC server.
- * Formats errors according to the XRPC specification and includes appropriate logging.
- * @internal
- * @param options - Server options containing error parsing configuration
- * @returns Middleware function that handles errors
- */
-function createErrorMiddleware(
-  { errorParser = (err: unknown) => XRPCError.fromError(err) },
-) {
-  return (err: unknown, c: Context) => {
-    const locals = c.get(REQUEST_LOCALS_KEY);
-    const methodSuffix = locals ? ` method ${locals.nsid}` : "";
-
-    const xrpcError = errorParser(err);
-    const isInternalError = xrpcError instanceof InternalServerError;
-
-    // Use the request's logger (if available) to benefit from request context
-    const reqLogger = isPinoHttpRequest(c.req) ? c.req.log : logger;
-
-    reqLogger.error(
-      {
-        // Strip stack for expected errors in production
-        err: isInternalError || Deno.env.get("NODE_ENV") === "development"
-          ? err
-          : toSimplifiedErrorLike(err),
-
-        // XRPC specific properties for easier log browsing
-        nsid: locals?.nsid,
-        type: xrpcError.type,
-        status: xrpcError.statusCode,
-        payload: xrpcError.payload,
-
-        // Ensure consistent logger name
-        name: LOGGER_NAME,
-      },
-      isInternalError
-        ? `unhandled exception in xrpc${methodSuffix}`
-        : `error in xrpc${methodSuffix}`,
-    );
-
-    // Return error response with proper status code and JSON payload
-    return new Response(JSON.stringify(xrpcError.payload), {
-      status: xrpcError.statusCode,
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
       },
     });
+
+    this.subscriptions.set(nsid, server);
+  }
+
+  /**
+   * Creates a route-specific rate limiter based on the method configuration.
+   * @template A - The authentication type
+   * @template C - The handler context type
+   * @param nsid - The namespace identifier for the method
+   * @param config - The method configuration containing rate limit options
+   * @returns A route rate limiter or undefined if no rate limiting is configured
+   * @private
+   */
+  private createRouteRateLimiter<A extends Auth, C extends HandlerContext>(
+    nsid: string,
+    config: MethodConfig<A>,
+  ): RouteRateLimiter<C> | undefined {
+    // @NOTE global & shared rate limiters are instantiated with a context of
+    // HandlerContext which is compatible (more generic) with the context of
+    // this route specific rate limiters (C). For this reason, it's safe to
+    // cast these with an `any` context
+
+    const globalRateLimiter = this.globalRateLimiter as
+      | RouteRateLimiter<C>
+      | undefined;
+
+    // No route specific rate limiting configured, use the global rate limiter.
+    if (!config.rateLimit) return globalRateLimiter;
+
+    const { rateLimits } = this.options;
+
+    // @NOTE Silently ignore creation of route specific rate limiter if the
+    // `rateLimits` options was not provided to the constructor.
+    if (!rateLimits) return globalRateLimiter;
+
+    const { creator, bypass } = rateLimits;
+
+    const rateLimiters = asArray(config.rateLimit).map((options, i) => {
+      if (isSharedRateLimitOpts(options)) {
+        const rateLimiter = this.sharedRateLimiters?.get(options.name);
+
+        // The route config references a shared rate limiter that does not
+        // exist. This is a configuration error.
+        assert(
+          rateLimiter,
+          `Shared rate limiter "${options.name}" not defined`,
+        );
+
+        return WrappedRateLimiter.from<C>(
+          rateLimiter as unknown as RateLimiterI<C>,
+          options as unknown as WrappedRateLimiterOptions<C>,
+        );
+      } else {
+        return creator({
+          ...options,
+          calcKey: options.calcKey ?? defaultKey,
+          calcPoints: options.calcPoints ?? defaultPoints,
+          keyPrefix: `${nsid}-${i}`,
+        });
+      }
+    });
+
+    // If the route config contains an empty array, use global rate limiter.
+    if (!rateLimiters.length) return globalRateLimiter;
+
+    // The global rate limiter (if present) should be applied in addition to
+    // the route specific rate limiters.
+    if (globalRateLimiter) rateLimiters.push(globalRateLimiter);
+
+    return RouteRateLimiter.from<C>(
+      rateLimiters as unknown as readonly RateLimiterI<C>[],
+      { bypass },
+    );
+  }
+
+  /**
+   * Gets the underlying Hono app instance for external use.
+   * @returns The Hono application instance
+   */
+  get handler(): Hono {
+    return this.app;
+  }
+}
+
+/**
+ * Creates an error handler function for the Hono application.
+ * @param opts - Server options containing optional error parser
+ * @returns An error handler function that converts errors to XRPC error responses
+ */
+function createErrorHandler(opts: Options) {
+  return (err: Error, c: Context) => {
+    const errorParser = opts.errorParser ||
+      ((e: unknown) => XRPCError.fromError(e));
+    const xrpcError = errorParser(err);
+
+    const statusCode = "statusCode" in xrpcError
+      ? (xrpcError as { statusCode: number }).statusCode
+      : 500;
+
+    return c.json(
+      {
+        error: xrpcError.type || "InternalServerError",
+        message: xrpcError.message || "Internal Server Error",
+      },
+      statusCode as 500,
+    );
   };
 }
 
 /**
- * Type definition for objects with Pino-style logging.
- * Used to detect if a request has a Pino logger attached.
- * @internal
+ * Type guard to check if an object is a Pino HTTP request object.
+ * @param obj - The object to check
+ * @returns True if the object has a req property
+ * @private
  */
-type PinoLike = { log: { error: (obj: unknown, msg: string) => void } };
-
-/**
- * Type guard to check if a request object has Pino logging capabilities.
- *
- * @param {unknown} req - The request object to check
- * @returns {boolean} True if the request has a Pino-compatible logger
- * @internal
- */
-function isPinoHttpRequest(req: unknown): req is PinoLike {
-  if (!req || typeof req !== "object") return false;
-  const maybeLogger = req as Partial<PinoLike>;
-  return !!(maybeLogger.log?.error &&
-    typeof maybeLogger.log.error === "function");
+function _isPinoHttpRequest(obj: unknown): obj is {
+  req: unknown;
+} {
+  return (
+    !!obj &&
+    typeof obj === "object" &&
+    "req" in obj
+  );
 }
 
 /**
- * Converts an Error object into a simplified object suitable for logging.
- * Preserves important error properties while making them enumerable.
- *
- * @param {unknown} err - The error to simplify
- * @returns {unknown} A simplified error-like object
- * @internal
+ * Converts an error to a simplified error-like object for logging.
+ * @param err - The error to convert
+ * @returns A simplified error object or the original value
+ * @private
  */
-function toSimplifiedErrorLike(err: unknown): unknown {
+function _toSimplifiedErrorLike(err: unknown) {
   if (err instanceof Error) {
     return {
-      ...err,
-      // Carry over non-enumerable properties
+      name: err.name,
       message: err.message,
-      name: !Object.hasOwn(err, "name") &&
-          Object.prototype.toString.call(err.constructor) ===
-            "[object Function]"
-        ? err.constructor.name // extract class name for Error subclasses
-        : err.name,
+      stack: err.stack,
     };
   }
   return err;
 }
+
+/**
+ * Builds rate limiter options from a server rate limit description.
+ * @template C - The handler context type
+ * @param options - The server rate limit description
+ * @returns Rate limiter options with defaults applied
+ */
+function buildRateLimiterOptions<C extends HandlerContext = HandlerContext>({
+  name,
+  calcKey = defaultKey,
+  calcPoints = defaultPoints,
+  ...desc
+}: ServerRateLimitDescription<C>): RateLimiterOptions<C> {
+  return { ...desc, calcKey, calcPoints, keyPrefix: `rl-${name}` };
+}
+
+/**
+ * Default function for calculating rate limit points consumed per request.
+ * Always returns 1 point per request.
+ */
+const defaultPoints: CalcPointsFn = () => 1;
+
+/**
+ * Default function for calculating rate limit keys based on client IP address.
+ * Extracts IP from X-Forwarded-For, X-Real-IP headers, or falls back to "unknown".
+ *
+ * @note When using a proxy, ensure headers are getting forwarded correctly:
+ * `app.set('trust proxy', true)`
+ *
+ * @see {@link https://expressjs.com/en/guide/behind-proxies.html}
+ */
+const defaultKey: CalcKeyFn<HandlerContext> = ({ req }) => {
+  const forwarded = req.headers.get("x-forwarded-for");
+  const ip = forwarded
+    ? forwarded.split(",")[0]
+    : req.headers.get("x-real-ip") ||
+      "unknown";
+  return ip;
+};

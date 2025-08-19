@@ -48,7 +48,7 @@ Deno.test({
     const client = new XrpcClient(`http://localhost:${port}`, LEXICONS);
 
     try {
-      await Deno.test("validates query params", async () => {
+      Deno.test("validates query params", async () => {
         const res1 = await client.call("io.example.paramTest", {
           str: "valid",
           int: 5,

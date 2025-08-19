@@ -1,5 +1,5 @@
 import type * as xrpc from "../mod.ts";
-import { AuthRequiredError } from "../src/types.ts";
+import { AuthRequiredError } from "../src/errors.ts";
 
 export async function createServer(
   server: xrpc.Server,
@@ -16,15 +16,8 @@ export async function createServer(
     onListen({ port }) {
       resolveServer(port);
     },
-    handler: async (req) => {
-      const response = await server.app.fetch(req);
-      return response;
-    },
+    handler: server.handler.fetch,
   });
-
-  // Add XRPC routes to the server
-  server.app.route("", server.routes);
-  server.app.all("/xrpc/:methodId", server.catchall.bind(server));
 
   // Attach the abort controller and port for cleanup and access
   type ServerWithMetadata = Deno.HttpServer & {
@@ -55,7 +48,7 @@ export function createBasicAuth(allowed: {
   username: string;
   password: string;
 }) {
-  const verifyAuth = (header?: string) => {
+  const verifyAuth = (header?: string | null) => {
     if (!header || !header.startsWith("Basic ")) {
       throw new AuthRequiredError();
     }
@@ -71,10 +64,13 @@ export function createBasicAuth(allowed: {
     };
   };
 
-  return function (
-    ctx: { c: { req: { header: (name: string) => string | undefined } } },
-  ) {
-    return verifyAuth(ctx.c.req.header("authorization"));
+  return function (ctx: {
+    params: xrpc.Params;
+    input: xrpc.Input;
+    req: Request;
+    res: Response;
+  }) {
+    return verifyAuth(ctx.req.headers.get("authorization"));
   };
 }
 

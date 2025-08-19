@@ -151,7 +151,7 @@ Deno.test({
     }); // disable validateResponse to test client validation
     const s = await createServer(server);
     const port = (s as Deno.HttpServer & { port: number }).port;
-    server.method("io.example.error", (ctx: { params: xrpcServer.Params }) => {
+    server.method("io.example.error", (ctx: xrpcServer.HandlerContext) => {
       if (ctx.params["which"] === "foo") {
         throw new xrpcServer.InvalidRequestError("It was this one!", "Foo");
       } else if (ctx.params["which"] === "bar") {

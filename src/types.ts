@@ -1,63 +1,46 @@
 import type { Context, HonoRequest, Next } from "hono";
-import { isHttpError } from "http-errors";
 import { z } from "zod";
-import {
-  httpResponseCodeToName,
-  httpResponseCodeToString,
-  ResponseType,
-  ResponseTypeStrings,
-  XRPCError as XRPCClientError,
-} from "@atproto/xrpc";
+import type { ErrorResult, XRPCError } from "./errors.ts";
+import type { CalcKeyFn, CalcPointsFn } from "./rate-limiter.ts";
+import type { RateLimiterI } from "@sprk/xrpc-server";
 
 /**
- * Options for error handling.
- * @interface
- * @property {unknown} [cause] - The underlying cause of the error
+ * Represents a value that can be either synchronous or asynchronous.
+ * @template T - The type of the value
  */
-type ErrorOptions = {
-  cause?: unknown;
-};
+export type Awaitable<T> = T | Promise<T>;
 
 /**
- * Handler for unmatched XRPC method calls.
- * Used to provide custom handling for methods not explicitly defined.
- * @typedef {Function} CatchallHandler
- * @param {Context} c - The Hono context object
- * @param {Function} next - Function to call the next middleware
- * @returns {unknown} The handler's response
+ * Handler function for catching all unmatched routes.
+ * @param c - The Hono context object
+ * @param next - The next middleware function
+ * @returns A promise that resolves to void or a Response
  */
 export type CatchallHandler = (
   c: Context,
-  next: () => Promise<void>,
-) => unknown;
+  next: Next,
+) => Promise<void | Response>;
 
 /**
  * Configuration options for the XRPC server.
- * @interface
- * @property {boolean} [validateResponse] - Whether to validate responses against lexicon schemas
- * @property {Function} [catchall] - Handler for unmatched XRPC method calls
- * @property {Object} [payload] - Request payload size limits
- * @property {number} [payload.jsonLimit] - Maximum size in bytes for JSON payloads
- * @property {number} [payload.blobLimit] - Maximum size in bytes for binary payloads
- * @property {number} [payload.textLimit] - Maximum size in bytes for text payloads
- * @property {Object} [rateLimits] - Rate limiting configuration
- * @property {Function} rateLimits.creator - Factory function for creating rate limiters
- * @property {ServerRateLimitDescription[]} [rateLimits.global] - Rate limits applied to all routes
- * @property {ServerRateLimitDescription[]} [rateLimits.shared] - Named rate limits that can be shared across routes
- * @property {Function} [errorParser] - Custom error parser for converting errors to XRPCError format
  */
 export type Options = {
+  /** Whether to validate response schemas */
   validateResponse?: boolean;
-  catchall?: (c: Context, next: Next) => Promise<Response | void>;
-  payload?: {
-    jsonLimit?: number;
-    blobLimit?: number;
-    textLimit?: number;
-  };
+  /** Handler for catching all unmatched routes */
+  catchall?: CatchallHandler;
+  /** Payload size limits for different content types */
+  payload?: RouteOptions;
+  /** Rate limiting configuration */
   rateLimits?: {
-    creator: RateLimiterCreator;
-    global?: ServerRateLimitDescription[];
-    shared?: ServerRateLimitDescription[];
+    /** Factory function for creating rate limiters */
+    creator: RateLimiterCreator<HandlerContext>;
+    /** Global rate limits applied to all routes */
+    global?: ServerRateLimitDescription<HandlerContext>[];
+    /** Shared rate limits that can be referenced by name */
+    shared?: ServerRateLimitDescription<HandlerContext>[];
+    /** Function to determine if rate limits should be bypassed for a request */
+    bypass?: (ctx: HandlerContext) => boolean;
   };
   /**
    * By default, errors are converted to {@link XRPCError} using
@@ -73,10 +56,9 @@ export type Options = {
 };
 
 /**
- * Raw query parameters before type conversion.
- * Maps parameter names to their string values or arrays of string values.
+ * Raw query parameters from the HTTP request before type conversion.
  */
-export type UndecodedParams = Record<string, string | string[]>;
+export type UndecodedParams = HonoRequest["query"];
 
 /**
  * Basic primitive types supported in XRPC parameters.
@@ -84,849 +66,421 @@ export type UndecodedParams = Record<string, string | string[]>;
 export type Primitive = string | number | boolean;
 
 /**
- * Decoded and type-converted query parameters.
- * Maps parameter names to their typed values or arrays of typed values.
+ * Type-safe parameter object with optional primitive values or arrays.
  */
-export type Params = Record<string, Primitive | Primitive[] | undefined>;
+export type Params = { [P in string]?: undefined | Primitive | Primitive[] };
 
 /**
- * Validated request input data.
- * @property {string} encoding - Content type/encoding of the input (e.g., 'application/json')
- * @property {unknown} body - The parsed request body
+ * Input data for XRPC method handlers.
  */
 export type HandlerInput = {
+  /** Content encoding of the request body */
   encoding: string;
+  /** Parsed request body */
   body: unknown;
 };
 
-export const handlerInput = z.object({
-  encoding: z.string(),
-  body: z.unknown(),
-}).required().strict() as z.ZodType<HandlerInput>;
-
 /**
- * Authentication result data.
- * Contains both the credentials presented and any artifacts produced during verification.
- * @property {unknown} credentials - Authentication credentials (e.g., JWT claims)
- * @property {unknown} artifacts - Additional data produced during auth verification
+ * Result of successful authentication.
  */
-export type HandlerAuth = {
+export type AuthResult = {
+  /** Authentication credentials (e.g., user info, tokens) */
   credentials: unknown;
-  artifacts: unknown;
+  /** Optional authentication artifacts (e.g., session data) */
+  artifacts?: unknown;
 };
 
-export type NullAuthOutput = HandlerAuth & {
-  credentials: {
-    type: "none";
-    iss: null;
-  };
-  artifacts: Record<string, never>;
-};
-
-export type StandardAuthOutput = HandlerAuth & {
-  credentials: {
-    type: "standard";
-    aud: string;
-    iss: string;
-  };
-  artifacts: Record<string, never>;
-};
-
-export type RoleAuthOutput = HandlerAuth & {
-  credentials: {
-    type: "role";
-    admin: boolean;
-  };
-  artifacts: Record<string, never>;
-};
-
-export type ModServiceAuthOutput = HandlerAuth & {
-  credentials: {
-    type: "mod_service";
-    aud: string;
-    iss: string;
-  };
-  artifacts: Record<string, never>;
-};
-
-export const handlerAuth = z.object({
-  credentials: z.unknown(),
-  artifacts: z.unknown(),
-}).required({
-  credentials: true,
-  artifacts: true,
-}).strict() as z.ZodType<HandlerAuth>;
-
-export const headersSchema: z.ZodType<Record<string, string>> = z.record(
+export const headersSchema: z.ZodRecord<z.ZodString, z.ZodString> = z.record(
+  z.string(),
   z.string(),
 );
 
 /**
- * Successful response from an XRPC method handler.
- * @property {string} encoding - Content type/encoding of the response (e.g., 'application/json')
- * @property {unknown} body - The response payload
- * @property {Record<string, string>} [headers] - Additional HTTP headers to include in the response
+ * HTTP headers as a record of string key-value pairs.
  */
-export type HandlerSuccess = {
-  encoding: string;
-  body: unknown;
-  headers?: Record<string, string>;
-};
+export type Headers = z.infer<typeof headersSchema>;
 
-export const handlerSuccess = z.object({
+export const handlerSuccess: z.ZodObject<{
+  encoding: z.ZodString;
+  body: z.ZodAny;
+  headers: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+}> = z.object({
   encoding: z.string(),
-  body: z.unknown(),
+  body: z.any(),
   headers: headersSchema.optional(),
-}).strict() as z.ZodType<HandlerSuccess>;
+});
 
 /**
- * Stream-based response from an XRPC method handler.
- * Used for large responses that should be streamed rather than buffered.
- * @property {string} encoding - Content type/encoding of the stream
- * @property {ReadableStream<Uint8Array>} stream - The response data stream
- * @property {Record<string, string>} [headers] - Additional HTTP headers to include in the response
+ * Successful response from a method handler.
  */
-export type HandlerPipeThroughStream = {
-  encoding: string;
-  stream: ReadableStream<Uint8Array>;
-  headers?: Record<string, string>;
-};
-
-export const handlerPipeThroughStream: z.ZodType<HandlerPipeThroughStream> = z
-  .object({
-    encoding: z.string(),
-    stream: z.custom<ReadableStream<Uint8Array>>((val) =>
-      val instanceof ReadableStream
-    ),
-    headers: headersSchema.optional(),
-  });
+export type HandlerSuccess = z.infer<typeof handlerSuccess>;
 
 /**
- * Buffer-based response from an XRPC method handler.
- * Used for binary responses that are fully loaded in memory.
- * @property {string} encoding - Content type/encoding of the buffer
- * @property {Uint8Array} buffer - The response data buffer
- * @property {Record<string, string>} [headers] - Additional HTTP headers to include in the response
+ * Handler response that pipes through a buffer.
  */
 export type HandlerPipeThroughBuffer = {
+  /** Content encoding of the response */
   encoding: string;
+  /** Response data as a buffer */
   buffer: Uint8Array;
-  headers?: Record<string, string>;
+  /** Optional HTTP headers */
+  headers?: Headers;
 };
 
-export const handlerPipeThroughBuffer: z.ZodType<HandlerPipeThroughBuffer> = z
-  .object({
-    encoding: z.string(),
-    buffer: z.custom<Uint8Array>((val) => val instanceof Uint8Array),
-    headers: headersSchema.optional(),
-  });
+/**
+ * Handler response that pipes through a stream.
+ */
+export type HandlerPipeThroughStream = {
+  /** Content encoding of the response */
+  encoding: string;
+  /** Response data as a readable stream */
+  stream: ReadableStream<Uint8Array>;
+  /** Optional HTTP headers */
+  headers?: Headers;
+};
 
 /**
- * Union type for all streaming/buffer response types.
+ * Union type for handler responses that pipe data through either a buffer or stream.
  */
 export type HandlerPipeThrough =
   | HandlerPipeThroughBuffer
   | HandlerPipeThroughStream;
 
-export const handlerPipeThrough: z.ZodType<HandlerPipeThrough> = z.union([
-  handlerPipeThroughBuffer,
-  handlerPipeThroughStream,
-]);
+/**
+ * Authentication state for a handler context.
+ */
+export type Auth = void | AuthResult;
 
 /**
- * Error response from an XRPC method handler.
- * @property {number} status - HTTP status code
- * @property {string} [error] - Error code/type
- * @property {string} [message] - Human-readable error message
+ * Input data for a handler context.
  */
-export type HandlerError = {
-  status: number;
-  error?: string;
-  message?: string;
-};
-
-export const handlerError: z.ZodType<HandlerError> = z.object({
-  status: z.number(),
-  error: z.string().optional(),
-  message: z.string().optional(),
-});
+export type Input = void | HandlerInput;
 
 /**
- * Union type for all possible handler responses.
+ * Output data from a handler.
  */
-export type HandlerOutput = HandlerSuccess | HandlerPipeThrough | HandlerError;
+export type Output = void | HandlerSuccess | ErrorResult;
 
 /**
- * Context object passed to XRPC method handlers.
- * Contains all request data and utilities needed to process the request.
- * @property {Context} c - Hono context object
- * @property {Params} params - Decoded query parameters
- * @property {HandlerInput | undefined} input - Validated request body, if any
- * @property {HandlerAuth | undefined} auth - Authentication data, if auth was performed
- * @property {Function} resetRouteRateLimits - Function to reset rate limits for this route
- * @property {HonoRequest} [req] - Raw Hono request object
+ * Function that verifies authentication for a request.
+ * @template C - The context type
+ * @template A - The authentication result type
  */
-export type XRPCReqContext = {
-  c: Context;
-  params: Params;
-  input: HandlerInput | undefined;
-  auth: HandlerAuth | undefined;
+export type AuthVerifier<C, A extends AuthResult = AuthResult> =
+  | ((ctx: C) => Awaitable<A | ErrorResult>)
+  | ((ctx: C) => Awaitable<A>);
+
+// Handler context that combines Hono Context with XRPC-specific properties
+/**
+ * Context object provided to XRPC method handlers containing request data and utilities.
+ * @template A - Authentication type
+ * @template P - Parameters type
+ * @template I - Input type
+ */
+export type HandlerContext<
+  A extends Auth = Auth,
+  P extends Params = Params,
+  I extends Input = Input,
+> = MethodAuthContext<P> & {
+  /** Authentication result */
+  auth: A;
+  /** Request input data */
+  input: I;
+  /** Function to reset rate limits for this route */
   resetRouteRateLimits: () => Promise<void>;
-  req?: HonoRequest;
 };
 
 /**
- * Context object passed to streaming XRPC method handlers.
- * Contains request data and control signals for streaming responses.
- * @property {Request} req - Raw request object
- * @property {Params} params - Decoded query parameters
- * @property {HandlerAuth | undefined} auth - Authentication data, if auth was performed
- * @property {AbortSignal} signal - Signal for detecting client disconnection
+ * Handler function for XRPC methods.
+ * @template A - Authentication type
+ * @template P - Parameters type
+ * @template I - Input type
+ * @template O - Output type
  */
-export type XRPCStreamReqContext = {
-  req: Request;
-  params: Params;
-  auth: HandlerAuth | undefined;
-  signal: AbortSignal;
-};
+export type MethodHandler<
+  A extends Auth = Auth,
+  P extends Params = Params,
+  I extends Input = Input,
+  O extends Output = Output,
+> = (ctx: HandlerContext<A, P, I>) => Awaitable<O | HandlerPipeThrough>;
 
 /**
- * Handler function type for XRPC methods.
- * Processes requests and returns responses synchronously or asynchronously.
+ * Factory function for creating rate limiter instances.
+ * @template T - The handler context type
  */
-export type XRPCHandler = (
-  ctx: XRPCReqContext,
-) => Promise<HandlerOutput> | HandlerOutput | undefined;
-
-/**
- * Handler function type for streaming XRPC methods.
- * Returns an async iterable that yields response chunks.
- */
-export type XRPCStreamHandler = (ctx: {
-  auth: HandlerAuth | undefined;
-  params: Params;
-  req: Request;
-  signal: AbortSignal;
-}) => AsyncIterable<unknown>;
-
-/**
- * Union type for authentication results.
- * Can be either successful auth data or an error response.
- */
-export type AuthOutput = HandlerAuth | HandlerError;
-
-/**
- * Context object passed to authentication verifiers.
- * Contains the raw request data needed for auth verification.
- */
-export interface AuthVerifierContext {
-  c: Context;
-  req: HonoRequest;
-}
-
-/**
- * Authentication verifier function type.
- * Validates request authentication and returns auth data or an error.
- */
-export interface AuthVerifier {
-  (ctx: AuthVerifierContext): Promise<AuthOutput> | AuthOutput;
-}
-
-/**
- * Context object passed to streaming authentication verifiers.
- * Contains the raw request data needed for WebSocket auth verification.
- */
-export type StreamAuthVerifierContext = {
-  req: Request;
-};
-
-/**
- * Authentication verifier function type for streaming endpoints.
- * Validates WebSocket connection authentication.
- */
-export type StreamAuthVerifier = (
-  ctx: StreamAuthVerifierContext,
-) => Promise<AuthOutput> | AuthOutput;
-
-/**
- * Function type for calculating rate limit keys.
- * Returns a string key to identify the rate limit bucket, or null to skip rate limiting.
- */
-export type CalcKeyFn = (ctx: XRPCReqContext) => string | null;
-
-/**
- * Function type for calculating rate limit points.
- * Returns the number of points to consume for a request.
- */
-export type CalcPointsFn = (ctx: XRPCReqContext) => number;
-
-/**
- * Interface for rate limiter implementations.
- * Provides methods for consuming and resetting rate limits.
- */
-export interface RateLimiterI {
-  consume: RateLimiterConsume;
-  reset: RateLimiterReset;
-}
-
-/**
- * Function type for consuming rate limit points.
- * Returns the current rate limit status or an error if limit is exceeded.
- * @property {CalcKeyFn} [opts.calcKey] - Custom function to calculate the rate limit key
- * @property {CalcPointsFn} [opts.calcPoints] - Custom function to calculate points to consume
- */
-export type RateLimiterConsume = (
-  ctx: XRPCReqContext,
-  opts?: { calcKey?: CalcKeyFn; calcPoints?: CalcPointsFn },
-) => Promise<RateLimiterStatus | RateLimitExceededError | null>;
-
-/**
- * Function type for resetting rate limits.
- * @property {CalcKeyFn} [opts.calcKey] - Custom function to calculate the rate limit key
- */
-export type RateLimiterReset = (
-  ctx: XRPCReqContext,
-  opts?: { calcKey?: CalcKeyFn },
-) => Promise<void>;
-
-/**
- * Factory function type for creating rate limiters.
- * @property {string} opts.keyPrefix - Prefix for rate limit keys
- * @property {number} opts.durationMs - Duration of the rate limit window in milliseconds
- * @property {number} opts.points - Maximum points allowed in the window
- * @property {CalcKeyFn} [opts.calcKey] - Custom function to calculate rate limit keys
- * @property {CalcPointsFn} [opts.calcPoints] - Custom function to calculate points
- */
-export type RateLimiterCreator = (opts: {
+export type RateLimiterCreator<T extends HandlerContext = HandlerContext> = <
+  C extends T = T,
+>(opts: {
+  /** Prefix for rate limiter keys */
   keyPrefix: string;
+  /** Duration window in milliseconds */
   durationMs: number;
+  /** Number of points allowed in the duration window */
   points: number;
-  calcKey?: CalcKeyFn;
-  calcPoints?: CalcPointsFn;
-}) => RateLimiterI;
+  /** Function to calculate the rate limit key */
+  calcKey: CalcKeyFn<C>;
+  /** Function to calculate points consumed */
+  calcPoints: CalcPointsFn<C>;
+  /** Whether to fail closed (deny) when rate limiter is unavailable */
+  failClosed?: boolean;
+}) => RateLimiterI<C>;
 
 /**
- * Configuration for a server-wide rate limit.
- * @property {string} name - Unique identifier for the rate limit
- * @property {number} durationMs - Duration of the rate limit window in milliseconds
- * @property {number} points - Maximum points allowed in the window
- * @property {CalcKeyFn} [calcKey] - Custom function to calculate rate limit keys
- * @property {CalcPointsFn} [calcPoints] - Custom function to calculate points
+ * Context object for method authentication containing request data.
+ * @template P - Parameters type
+ * @template I - Input type
  */
-export type ServerRateLimitDescription = {
+export type MethodAuthContext<
+  P extends Params = Params,
+  I extends Input = Input,
+> = {
+  /** Parsed request parameters */
+  params: P;
+  /** Request input data */
+  input: I;
+  /** HTTP request object */
+  req: Request;
+  /** HTTP response object */
+  res: Response;
+};
+
+/**
+ * Authentication verifier function for XRPC methods.
+ * @template A - Authentication result type
+ * @template P - Parameters type
+ * @template I - Input type
+ */
+export type MethodAuthVerifier<
+  A extends AuthResult = AuthResult,
+  P extends Params = Params,
+  I extends Input = Input,
+> = (ctx: MethodAuthContext<P, I>) => Awaitable<A>;
+
+/**
+ * Context object for streaming handlers.
+ * @template A - Authentication type
+ * @template P - Parameters type
+ */
+export type StreamContext<
+  A extends Auth = Auth,
+  P extends Params = Params,
+> = StreamAuthContext<P> & {
+  /** Authentication result */
+  auth: A;
+  /** Abort signal for cancelling the stream */
+  signal: AbortSignal;
+};
+
+/**
+ * Handler function for streaming XRPC endpoints.
+ * @template A - Authentication type
+ * @template P - Parameters type
+ * @template O - Output item type
+ */
+export type StreamHandler<
+  A extends Auth = Auth,
+  P extends Params = Params,
+  O = unknown,
+> = (ctx: StreamContext<A, P>) => AsyncIterable<O>;
+
+/**
+ * Context object for stream authentication.
+ * @template P - Parameters type
+ */
+export type StreamAuthContext<P extends Params = Params> = {
+  /** Parsed request parameters */
+  params: P;
+  /** HTTP request object */
+  req: Request;
+};
+
+/**
+ * Authentication verifier function for streaming endpoints.
+ * @template A - Authentication result type
+ * @template P - Parameters type
+ */
+export type StreamAuthVerifier<
+  A extends AuthResult = AuthResult,
+  P extends Params = Params,
+> = AuthVerifier<StreamAuthContext<P>, A>;
+
+/**
+ * Configuration for server-level rate limits.
+ * @template C - Handler context type
+ */
+export type ServerRateLimitDescription<
+  C extends HandlerContext = HandlerContext,
+> = {
+  /** Unique name for this rate limit */
   name: string;
+  /** Duration window in milliseconds */
   durationMs: number;
+  /** Number of points allowed in the duration window */
   points: number;
-  calcKey?: CalcKeyFn;
-  calcPoints?: CalcPointsFn;
+  /** Optional function to calculate the rate limit key */
+  calcKey?: CalcKeyFn<C>;
+  /** Optional function to calculate points consumed */
+  calcPoints?: CalcPointsFn<C>;
+  /** Whether to fail closed when rate limiter is unavailable */
+  failClosed?: boolean;
 };
 
 /**
- * Configuration for a shared rate limit that can be referenced by name.
- * @property {string} name - Name of the shared rate limit to use
- * @property {CalcKeyFn} [calcKey] - Custom function to calculate rate limit keys
- * @property {CalcPointsFn} [calcPoints] - Custom function to calculate points
+ * Options for referencing a shared rate limit by name.
+ * @template C - Handler context type
  */
-export type SharedRateLimitOpts = {
+export type SharedRateLimitOpts<C extends HandlerContext = HandlerContext> = {
+  /** Name of the shared rate limit to use */
   name: string;
-  calcKey?: CalcKeyFn;
-  calcPoints?: CalcPointsFn;
+  /** Optional function to calculate the rate limit key */
+  calcKey?: CalcKeyFn<C>;
+  /** Optional function to calculate points consumed */
+  calcPoints?: CalcPointsFn<C>;
 };
 
 /**
- * Configuration for a route-specific rate limit.
- * @property {number} durationMs - Duration of the rate limit window in milliseconds
- * @property {number} points - Maximum points allowed in the window
- * @property {CalcKeyFn} [calcKey] - Custom function to calculate rate limit keys
- * @property {CalcPointsFn} [calcPoints] - Custom function to calculate points
+ * Options for defining a route-specific rate limit.
+ * @template C - Handler context type
  */
-export type RouteRateLimitOpts = {
+export type RouteRateLimitOpts<C extends HandlerContext = HandlerContext> = {
+  /** Duration window in milliseconds */
   durationMs: number;
+  /** Number of points allowed in the duration window */
   points: number;
-  calcKey?: CalcKeyFn;
-  calcPoints?: CalcPointsFn;
+  /** Optional function to calculate the rate limit key */
+  calcKey?: CalcKeyFn<C>;
+  /** Optional function to calculate points consumed */
+  calcPoints?: CalcPointsFn<C>;
 };
 
 /**
- * Union type for rate limit options.
- * Can be either a shared rate limit reference or a route-specific configuration.
+ * Union type for rate limit options - either shared or route-specific.
+ * @template C - Handler context type
  */
-export type HandlerRateLimitOpts = SharedRateLimitOpts | RouteRateLimitOpts;
+export type RateLimitOpts<C extends HandlerContext = HandlerContext> =
+  | SharedRateLimitOpts<C>
+  | RouteRateLimitOpts<C>;
 
 /**
  * Type guard to check if rate limit options are for a shared rate limit.
+ * @template C - Handler context type
+ * @param opts Rate limit options to check
+ * @returns True if the options reference a shared rate limit
  */
-export const isShared = (
-  opts: HandlerRateLimitOpts,
-): opts is SharedRateLimitOpts => {
-  return "name" in opts &&
-    typeof (opts as SharedRateLimitOpts).name === "string";
+export function isSharedRateLimitOpts<
+  C extends HandlerContext = HandlerContext,
+>(opts: RateLimitOpts<C>): opts is SharedRateLimitOpts<C> {
+  return "name" in opts && typeof opts.name === "string";
+}
+
+/**
+ * Options for configuring payload size limits by content type.
+ */
+export type RouteOptions = {
+  /** Maximum size for binary/blob payloads in bytes */
+  blobLimit?: number;
+  /** Maximum size for JSON payloads in bytes */
+  jsonLimit?: number;
+  /** Maximum size for text payloads in bytes */
+  textLimit?: number;
 };
 
 /**
- * Current status of a rate limit.
- * @property {number} limit - Maximum points allowed in the window
- * @property {number} duration - Duration of the window in milliseconds
- * @property {number} remainingPoints - Points remaining in the current window
- * @property {number} msBeforeNext - Milliseconds until the next window starts
- * @property {number} consumedPoints - Points consumed in the current window
- * @property {boolean} isFirstInDuration - Whether this is the first request in a new window
- */
-export type RateLimiterStatus = {
-  limit: number;
-  duration: number;
-  remainingPoints: number;
-  msBeforeNext: number;
-  consumedPoints: number;
-  isFirstInDuration: boolean;
-};
-
-/**
- * Configuration options for a route handler.
- * @property {number} [blobLimit] - Maximum size in bytes for binary payloads on this route
+ * Simplified route options with only blob limit configuration.
  */
 export type RouteOpts = {
+  /** Maximum size for binary/blob payloads in bytes */
   blobLimit?: number;
 };
 
 /**
- * Configuration for an XRPC method handler.
- * @property {RouteOpts} [opts] - Route-specific options
- * @property {HandlerRateLimitOpts | HandlerRateLimitOpts[]} [rateLimit] - Rate limit configuration(s)
- * @property {AuthVerifier} [auth] - Authentication verifier function
- * @property {XRPCHandler} handler - The method implementation
+ * Configuration object for an XRPC method including handler, auth, and options.
+ * @template A - Authentication type
+ * @template P - Parameters type
+ * @template I - Input type
+ * @template O - Output type
  */
-export type XRPCHandlerConfig = {
-  opts?: RouteOpts;
-  rateLimit?: HandlerRateLimitOpts | HandlerRateLimitOpts[];
-  auth?: AuthVerifier;
-  handler: XRPCHandler;
+export type MethodConfig<
+  A extends Auth = Auth,
+  P extends Params = Params,
+  I extends Input = Input,
+  O extends Output = Output,
+> = {
+  /** The method handler function */
+  handler: MethodHandler<A, P, I, O>;
+  /** Optional authentication verifier */
+  auth?: MethodAuthVerifier<Extract<A, AuthResult>, P>;
+  /** Optional route configuration */
+  opts?: RouteOptions;
+  /** Optional rate limiting configuration */
+  rateLimit?:
+    | RateLimitOpts<HandlerContext<A, P, I>>
+    | RateLimitOpts<HandlerContext<A, P, I>>[];
 };
 
 /**
- * Configuration for a streaming XRPC method handler.
- * @property {StreamAuthVerifier} [auth] - Authentication verifier for WebSocket connections
- * @property {XRPCStreamHandler} handler - The streaming method implementation
+ * Union type allowing either a simple handler function or full method configuration.
+ * @template A - Authentication type
+ * @template P - Parameters type
+ * @template I - Input type
+ * @template O - Output type
  */
-export type XRPCStreamHandlerConfig = {
-  auth?: StreamAuthVerifier;
-  handler: XRPCStreamHandler;
+export type MethodConfigOrHandler<
+  A extends Auth = Auth,
+  P extends Params = Params,
+  I extends Input = Input,
+  O extends Output = Output,
+> = MethodHandler<A, P, I, O> | MethodConfig<A, P, I, O>;
+
+/**
+ * Configuration object for a streaming XRPC endpoint.
+ * @template A - Authentication type
+ * @template P - Parameters type
+ * @template O - Output item type
+ */
+export type StreamConfig<
+  A extends Auth = Auth,
+  P extends Params = Params,
+  O = unknown,
+> = {
+  /** Optional authentication verifier for the stream */
+  auth?: StreamAuthVerifier<Extract<A, AuthResult>, P>;
+  /** The stream handler function */
+  handler: StreamHandler<A, P, O>;
 };
 
-export { ResponseType };
-
 /**
- * Converts an upstream XRPC {@link ResponseType} into a downstream {@link ResponseType}.
+ * Union type allowing either a simple stream handler or full stream configuration.
+ * @template A - Authentication type
+ * @template P - Parameters type
+ * @template O - Output item type
  */
-function mapFromClientError(error: XRPCClientError): {
-  error: string;
-  message: string;
-  type: ResponseType;
-} {
-  switch (error.status) {
-    case ResponseType.InvalidResponse:
-      // Upstream server returned an XRPC response that is not compatible with our internal lexicon definitions for that XRPC method.
-      // @NOTE This could be reflected as both a 500 ("we" are at fault) and 502 ("they" are at fault). Let's be gents about it.
-      return {
-        error: httpResponseCodeToName(ResponseType.InternalServerError),
-        message: httpResponseCodeToString(ResponseType.InternalServerError),
-        type: ResponseType.InternalServerError,
-      };
-    case ResponseType.Unknown:
-      // Typically a network error / unknown host
-      return {
-        error: httpResponseCodeToName(ResponseType.InternalServerError),
-        message: httpResponseCodeToString(ResponseType.InternalServerError),
-        type: ResponseType.InternalServerError,
-      };
-    default:
-      return {
-        error: error.error,
-        message: error.message,
-        type: error.status,
-      };
-  }
-}
+export type StreamConfigOrHandler<
+  A extends Auth = Auth,
+  P extends Params = Params,
+  O = unknown,
+> = StreamHandler<A, P, O> | StreamConfig<A, P, O>;
 
 /**
- * Base class for XRPC errors.
- * Provides standardized error handling and formatting for XRPC responses.
- * @class
- * @extends Error
- * @property {ResponseType} type - The HTTP response type/status code
- * @property {string} [errorMessage] - Human-readable error message
- * @property {string} [customErrorName] - Custom error identifier
- * @property {unknown} [cause] - The underlying cause of the error
- */
-export class XRPCError extends Error {
-  public override cause?: unknown;
-
-  constructor(
-    public type: ResponseType,
-    public errorMessage?: string,
-    public customErrorName?: string,
-    options?: ErrorOptions,
-  ) {
-    super(errorMessage);
-    if (options?.cause) {
-      this.cause = options.cause;
-    }
-  }
-
-  /**
-   * Gets the HTTP status code for this error.
-   * @returns {number} The HTTP status code
-   */
-  get statusCode(): number {
-    const { type } = this;
-
-    // Fool-proofing. `new XRPCError(123.5 as number, '')` does not generate a TypeScript error.
-    // Because of this, we can end-up with any numeric value instead of an actual `ResponseType`.
-    // For legacy reasons, the `type` argument is not checked in the constructor, so we check it here.
-    if (type < 400 || type >= 600 || !Number.isFinite(type)) {
-      return 500;
-    }
-
-    return type;
-  }
-
-  /**
-   * Gets the error payload for the response.
-   * @returns {{ error: string; message: string }} The formatted error payload
-   */
-  get payload(): { error: string; message: string } {
-    return {
-      error: this.customErrorName ?? this.typeName ?? "Unknown",
-      message: this.type === ResponseType.InternalServerError
-        ? this.typeStr ?? "Internal Server Error"
-        : this.errorMessage || this.typeStr || "Unknown Error",
-    };
-  }
-
-  /**
-   * Gets the name of the error type.
-   * @returns {string | undefined} The error type name
-   */
-  get typeName(): string | undefined {
-    return ResponseType[this.type];
-  }
-
-  /**
-   * Gets the string representation of the error type.
-   * @returns {string | undefined} The error type string
-   */
-  get typeStr(): string | undefined {
-    return ResponseTypeStrings[this.type];
-  }
-
-  /**
-   * Creates an XRPCError from any error object.
-   * Handles various error types and formats them consistently.
-   * @static
-   * @param {unknown} cause - The error to convert
-   * @returns {XRPCError} A properly formatted XRPC error
-   */
-  static fromError(cause: unknown): XRPCError {
-    if (cause instanceof XRPCError) {
-      return cause;
-    }
-
-    if (cause instanceof XRPCClientError) {
-      const { error, message, type } = mapFromClientError(cause);
-      return new XRPCError(type, message, error, { cause });
-    }
-
-    if (isHttpError(cause)) {
-      const httpError = cause as {
-        status: number;
-        message: string;
-        name: string;
-      };
-      return new XRPCError(
-        httpError.status,
-        httpError.message,
-        httpError.name,
-        { cause },
-      );
-    }
-
-    if (isHandlerError(cause)) {
-      return this.fromHandlerError(cause);
-    }
-
-    if (cause instanceof Error) {
-      return new InternalServerError(cause.message, undefined, { cause });
-    }
-
-    return new InternalServerError(
-      "Unexpected internal server error",
-      undefined,
-      { cause },
-    );
-  }
-
-  /**
-   * Creates an XRPCError from a HandlerError object.
-   * @static
-   * @param {HandlerError} err - The handler error to convert
-   * @returns {XRPCError} A properly formatted XRPC error
-   */
-  static fromHandlerError(err: HandlerError): XRPCError {
-    return new XRPCError(err.status, err.message, err.error, { cause: err });
-  }
-}
-
-/**
- * Type guard to check if a value is a HandlerError.
- * @param {unknown} v - The value to check
- * @returns {boolean} True if the value is a HandlerError
- */
-export function isHandlerError(v: unknown): v is HandlerError {
-  if (!v || typeof v !== "object") return false;
-  const obj = v as Record<string, unknown>;
-  return (
-    typeof obj.status === "number" &&
-    (obj.error === undefined || typeof obj.error === "string") &&
-    (obj.message === undefined || typeof obj.message === "string")
-  );
-}
-
-/**
- * Type guard to check if a value is a HandlerPipeThroughBuffer.
- * @param {HandlerOutput} v - The value to check
- * @returns {boolean} True if the value is a HandlerPipeThroughBuffer
+ * Type guard to check if handler output is a pipe-through buffer response.
+ * @param output - The handler output to check
+ * @returns True if the output is a buffer pipe-through response
  */
 export function isHandlerPipeThroughBuffer(
-  v: HandlerOutput,
-): v is HandlerPipeThroughBuffer {
-  return "buffer" in v && (v as HandlerPipeThroughBuffer).buffer !== undefined;
+  output: Output | HandlerPipeThrough,
+): output is HandlerPipeThroughBuffer {
+  // We only need to discriminate between possible Output values
+  return output != null && "buffer" in output && output["buffer"] !== undefined;
 }
 
 /**
- * Type guard to check if a value is a HandlerPipeThroughStream.
- * @param {HandlerOutput} v - The value to check
- * @returns {boolean} True if the value is a HandlerPipeThroughStream
+ * Type guard to check if handler output is a pipe-through stream response.
+ * @param output - The handler output to check
+ * @returns True if the output is a stream pipe-through response
  */
 export function isHandlerPipeThroughStream(
-  v: HandlerOutput,
-): v is HandlerPipeThroughStream {
-  return "stream" in v && (v as HandlerPipeThroughStream).stream !== undefined;
+  output: Output | HandlerPipeThrough,
+): output is HandlerPipeThroughStream {
+  // We only need to discriminate between possible Output values
+  return output != null && "stream" in output && output["stream"] !== undefined;
 }
-
-/**
- * Error thrown when the request format or parameters are invalid.
- */
-export class InvalidRequestError extends XRPCError {
-  constructor(message = "Invalid Request", error = "InvalidRequest") {
-    super(ResponseType.InvalidRequest, message, error);
-  }
-}
-
-/**
- * Error thrown when the request payload exceeds size limits.
- */
-export class PayloadTooLargeError extends XRPCError {
-  constructor(message = "Request entity too large", error = "PayloadTooLarge") {
-    super(ResponseType.PayloadTooLarge, message, error);
-  }
-}
-
-/**
- * Error thrown when authentication is required but not provided.
- */
-export class AuthRequiredError extends XRPCError {
-  constructor(
-    errorMessage?: string,
-    customErrorName?: string,
-    options?: ErrorOptions,
-  ) {
-    super(
-      ResponseType.AuthenticationRequired,
-      errorMessage,
-      customErrorName,
-      options,
-    );
-  }
-
-  [Symbol.hasInstance](instance: unknown): boolean {
-    return (
-      instance instanceof XRPCError &&
-      instance.type === ResponseType.AuthenticationRequired
-    );
-  }
-}
-
-/**
- * Error thrown when the authenticated user lacks permission.
- */
-export class ForbiddenError extends XRPCError {
-  constructor(
-    errorMessage?: string,
-    customErrorName?: string,
-    options?: ErrorOptions,
-  ) {
-    super(ResponseType.Forbidden, errorMessage, customErrorName, options);
-  }
-
-  [Symbol.hasInstance](instance: unknown): boolean {
-    return (
-      instance instanceof XRPCError && instance.type === ResponseType.Forbidden
-    );
-  }
-}
-
-/**
- * Error thrown when rate limits are exceeded.
- * Includes the current rate limit status.
- */
-export class RateLimitExceededError extends XRPCError {
-  constructor(
-    public status: RateLimiterStatus,
-    errorMessage?: string,
-    customErrorName?: string,
-    options?: ErrorOptions,
-  ) {
-    super(
-      ResponseType.RateLimitExceeded,
-      errorMessage,
-      customErrorName,
-      options,
-    );
-  }
-
-  [Symbol.hasInstance](instance: unknown): boolean {
-    return (
-      instance instanceof XRPCError &&
-      instance.type === ResponseType.RateLimitExceeded
-    );
-  }
-}
-
-/**
- * Error thrown for unexpected server-side errors.
- */
-export class InternalServerError extends XRPCError {
-  constructor(
-    errorMessage?: string,
-    customErrorName?: string,
-    options?: ErrorOptions,
-  ) {
-    super(
-      ResponseType.InternalServerError,
-      errorMessage,
-      customErrorName,
-      options,
-    );
-  }
-
-  [Symbol.hasInstance](instance: unknown): boolean {
-    return (
-      instance instanceof XRPCError &&
-      instance.type === ResponseType.InternalServerError
-    );
-  }
-}
-
-/**
- * Error thrown when a dependent service fails.
- */
-export class UpstreamFailureError extends XRPCError {
-  constructor(
-    errorMessage?: string,
-    customErrorName?: string,
-    options?: ErrorOptions,
-  ) {
-    super(ResponseType.UpstreamFailure, errorMessage, customErrorName, options);
-  }
-
-  [Symbol.hasInstance](instance: unknown): boolean {
-    return (
-      instance instanceof XRPCError &&
-      instance.type === ResponseType.UpstreamFailure
-    );
-  }
-}
-
-/**
- * Error thrown when server resources are exhausted.
- */
-export class NotEnoughResourcesError extends XRPCError {
-  constructor(
-    errorMessage?: string,
-    customErrorName?: string,
-    options?: ErrorOptions,
-  ) {
-    super(
-      ResponseType.NotEnoughResources,
-      errorMessage,
-      customErrorName,
-      options,
-    );
-  }
-
-  [Symbol.hasInstance](instance: unknown): boolean {
-    return (
-      instance instanceof XRPCError &&
-      instance.type === ResponseType.NotEnoughResources
-    );
-  }
-}
-
-/**
- * Error thrown when a dependent service times out.
- */
-export class UpstreamTimeoutError extends XRPCError {
-  constructor(
-    errorMessage?: string,
-    customErrorName?: string,
-    options?: ErrorOptions,
-  ) {
-    super(ResponseType.UpstreamTimeout, errorMessage, customErrorName, options);
-  }
-
-  [Symbol.hasInstance](instance: unknown): boolean {
-    return (
-      instance instanceof XRPCError &&
-      instance.type === ResponseType.UpstreamTimeout
-    );
-  }
-}
-
-/**
- * Error thrown when the requested XRPC method is not implemented.
- */
-export class MethodNotImplementedError extends XRPCError {
-  constructor(
-    message = "Method Not Implemented",
-    error = "MethodNotImplemented",
-  ) {
-    super(ResponseType.MethodNotImplemented, message, error);
-  }
-
-  [Symbol.hasInstance](instance: unknown): boolean {
-    return (
-      instance instanceof XRPCError &&
-      instance.type === ResponseType.MethodNotImplemented
-    );
-  }
-}
-
-/**
- * Options for rate limiter configuration.
- * @property {string} keyPrefix - Prefix for rate limit keys
- * @property {number} durationMs - Duration of the rate limit window in milliseconds
- * @property {number} points - Maximum points allowed in the window
- * @property {CalcKeyFn} [calcKey] - Custom function to calculate rate limit keys
- * @property {CalcPointsFn} [calcPoints] - Custom function to calculate points
- * @property {(ctx: XRPCReqContext) => boolean | Promise<boolean>} [bypass] - Optional callback to determine if rate limiting should be bypassed
- * @property {boolean} [failClosed] - Whether to fail closed on errors
- */
-export type RateLimiterOpts = {
-  keyPrefix: string;
-  durationMs: number;
-  points: number;
-  calcKey?: CalcKeyFn;
-  calcPoints?: CalcPointsFn;
-  bypass?: (ctx: XRPCReqContext) => boolean | Promise<boolean>;
-  failClosed?: boolean;
-};

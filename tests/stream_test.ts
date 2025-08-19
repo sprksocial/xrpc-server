@@ -42,8 +42,8 @@ function createTestServer(
 
 Deno.test({
   name: "Stream Tests",
-  async fn() {
-    await Deno.test("streams message and info frames", async () => {
+  fn() {
+    Deno.test("streams message and info frames", async () => {
       const { url, close } = createTestServer(async function* () {
         await wait(1);
         yield new MessageFrame(1);
@@ -69,7 +69,7 @@ Deno.test({
       close();
     });
 
-    await Deno.test("kills handler and closes on error frame", async () => {
+    Deno.test("kills handler and closes on error frame", async () => {
       let proceededAfterError = false;
       const { url, close } = createTestServer(async function* () {
         await wait(1);
@@ -102,7 +102,7 @@ Deno.test({
       close();
     });
 
-    await Deno.test("kills handler and closes client disconnect", async () => {
+    Deno.test("kills handler and closes client disconnect", async () => {
       let i = 1;
       const { url, close } = createTestServer(async function* () {
         while (true) {
@@ -128,7 +128,7 @@ Deno.test({
       close();
     });
 
-    await Deno.test("byMessage() tests", async (t) => {
+    Deno.test("byMessage() tests", async (t) => {
       await t.step(
         "kills handler and closes client disconnect on error frame",
         async () => {

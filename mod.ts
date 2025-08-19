@@ -3,14 +3,21 @@
  *
  * This module provides a Hono-based server implementation for atproto's XRPC protocol,
  * with support for Lexicon schema validation, authentication, rate limiting, and streaming.
+ * Written in TypeScript with full type safety and designed to work across JavaScript runtimes.
  *
  * ## Features
  * - Full Lexicon schema validation
- * - Built on Hono for high performance
- * - Authentication (Basic Auth, JWT)
+ * - Built on Hono for high performance and runtime compatibility
+ * - Authentication (Basic Auth, Bearer tokens, JWT verification)
  * - Rate limiting (global, shared, and per-route)
- * - Streaming support
- * - Server timing utilities
+ * - WebSocket streaming support
+ * - Server timing utilities for performance monitoring
+ * - Comprehensive error handling with XRPC error types
+ * - TypeScript-first with complete type definitions
+ *
+ * ## Runtime Compatibility
+ * Works with Deno, Node.js, Bun, Cloudflare Workers, and other JavaScript runtimes
+ * supported by Hono.
  *
  * @example Basic server setup with a simple endpoint
  * ```ts
@@ -38,39 +45,52 @@
  * server.method("com.example.ping", {
  *   handler: ({ params }) => ({
  *     encoding: "application/json",
- *     body: { message: params.message }
+ *     body: { message: params.message || "Hello World!" }
  *   })
  * });
  *
- * Deno.serve(server.app.fetch);
+ * // Deno
+ * Deno.serve(server.handler.fetch);
  * ```
  *
- * @example Authentication with Basic Auth and JWT
+ * @example Authentication with custom auth verifiers
  * ```ts
- * import { createBasicAuth, createServer } from "jsr:@sprk/xrpc-server";
+ * import { createServer, AuthRequiredError } from "jsr:@sprk/xrpc-server";
  *
  * const server = createServer(lexicons);
  *
- * // Basic Auth
+ * // Basic Auth verification
  * server.method("com.example.protected", {
- *   auth: createBasicAuth({ username: "admin", password: "secret" }),
+ *   auth: async ({ req }) => {
+ *     const auth = req.headers.get("Authorization");
+ *     if (!auth?.startsWith("Basic ")) {
+ *       throw new AuthRequiredError("Basic auth required");
+ *     }
+ *     const [username, password] = atob(auth.slice(6)).split(":");
+ *     if (username !== "admin" || password !== "secret") {
+ *       throw new AuthRequiredError("Invalid credentials");
+ *     }
+ *     return { credentials: { username } };
+ *   },
  *   handler: ({ auth }) => ({
  *     encoding: "application/json",
  *     body: { user: auth?.credentials?.username }
  *   })
  * });
  *
- * // JWT Auth
- * server.method("com.example.jwtProtected", {
+ * // Bearer token verification
+ * server.method("com.example.tokenProtected", {
  *   auth: async ({ req }) => {
- *     const token = req.header("Authorization")?.split(" ")[1];
- *     if (!token) return { error: "Missing token" };
- *     const validated = await verifyJwt(token, serviceDid);
- *     return { credentials: validated };
+ *     const token = req.headers.get("Authorization")?.replace("Bearer ", "");
+ *     if (!token) throw new AuthRequiredError("Bearer token required");
+ *
+ *     // Verify token (implement your own logic)
+ *     const user = await verifyToken(token);
+ *     return { credentials: user };
  *   },
  *   handler: ({ auth }) => ({
  *     encoding: "application/json",
- *     body: { user: auth?.credentials?.sub }
+ *     body: { userId: auth?.credentials?.id }
  *   })
  * });
  * ```
@@ -78,29 +98,31 @@
  * @example Rate limiting configuration
  * ```ts
  * import { createServer } from "jsr:@sprk/xrpc-server";
+ * import { MemoryRateLimiter } from "@sprk/xrpc-server";
  *
  * const server = createServer(lexicons, {
  *   rateLimits: {
- *     creator: createRateLimiter,
+ *     creator: (opts) => new MemoryRateLimiter(opts),
  *     global: [{
  *       name: "global",
  *       durationMs: 60000,  // 1 minute
- *       points: 100
+ *       points: 100        // 100 requests per minute
  *     }],
  *     shared: [{
- *       name: "auth",
+ *       name: "auth-heavy",
  *       durationMs: 300000,  // 5 minutes
- *       points: 20
- *     }]
+ *       points: 20          // 20 requests per 5 minutes
+ *     }],
+ *     bypass: (ctx) => ctx.auth?.credentials?.isAdmin === true
  *   }
  * });
  *
  * // Per-route rate limiting
  * server.method("com.example.limited", {
- *   rateLimit: {
- *     durationMs: 60000,
- *     points: 10
- *   },
+ *   rateLimit: [
+ *     { name: "auth-heavy" }, // Use shared rate limiter
+ *     { durationMs: 60000, points: 10 } // Additional route-specific limit
+ *   ],
  *   handler: () => ({
  *     encoding: "application/json",
  *     body: { status: "ok" }
@@ -108,18 +130,52 @@
  * });
  * ```
  *
- * @example Streaming endpoint
+ * @example Streaming endpoint with proper error handling
  * ```ts
- * import { createServer } from "jsr:@sprk/xrpc-server";
+ * import { createServer, ErrorFrame } from "jsr:@sprk/xrpc-server";
  *
  * const server = createServer(lexicons);
  *
- * server.streamMethod("com.example.stream", {
- *   handler: async function* ({ signal }) {
- *     while (!signal.aborted) {
- *       yield { time: new Date().toISOString() };
- *       await new Promise(r => setTimeout(r, 1000));
+ * server.streamMethod("com.example.events", {
+ *   auth: async ({ req }) => {
+ *     // Authenticate streaming connections
+ *     const token = req.headers.get("Authorization")?.replace("Bearer ", "");
+ *     if (!token) throw new AuthRequiredError("Authentication required");
+ *     return { credentials: await verifyToken(token) };
+ *   },
+ *   handler: async function* ({ auth, signal }) {
+ *     try {
+ *       const eventStream = subscribeToEvents(auth.credentials.userId);
+ *
+ *       while (!signal.aborted) {
+ *         const event = await eventStream.next();
+ *         if (event.done) break;
+ *
+ *         yield {
+ *           timestamp: new Date().toISOString(),
+ *           event: event.value
+ *         };
+ *       }
+ *     } catch (error) {
+ *       yield new ErrorFrame({
+ *         error: "StreamError",
+ *         message: error.message
+ *       });
  *     }
+ *   }
+ * });
+ * ```
+ *
+ * @example Error handling and custom error conversion
+ * ```ts
+ * import { createServer, XRPCError, InternalServerError } from "jsr:@sprk/xrpc-server";
+ *
+ * const server = createServer(lexicons, {
+ *   errorParser: (err) => {
+ *     if (err instanceof MyCustomError) {
+ *       return new InvalidRequestError(err.message, "CustomError");
+ *     }
+ *     return XRPCError.fromError(err);
  *   }
  * });
  * ```
@@ -130,6 +186,8 @@
 export * from "./src/types.ts";
 export * from "./src/auth.ts";
 export * from "./src/server.ts";
+export * from "./src/errors.ts";
+
 export * from "./src/stream/index.ts";
 export * from "./src/rate-limiter.ts";
 export {

@@ -65,9 +65,12 @@ type AuthTestAuth = {
 
 server.method("io.example.authTest", {
   auth: createBasicAuth({ username: "admin", password: "password" }),
-  handler: ({ auth }: xrpcServer.XRPCReqContext) => {
-    const credentials = auth?.credentials as { username: string } | undefined;
-    const artifacts = auth?.artifacts as { original: string } | undefined;
+  handler: (ctx: xrpcServer.HandlerContext) => {
+    const authResult = ctx.auth as xrpcServer.AuthResult | undefined;
+    const credentials = authResult?.credentials as
+      | { username: string }
+      | undefined;
+    const artifacts = authResult?.artifacts as { original: string } | undefined;
     return {
       encoding: "application/json",
       body: {

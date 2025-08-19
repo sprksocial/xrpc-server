@@ -134,7 +134,7 @@ Deno.test({
     addr = (s as Deno.HttpServer).addr;
 
     try {
-      await Deno.test("streams messages", async () => {
+      Deno.test("streams messages", async () => {
         const ws = new WebSocket(
           `ws://${addr}/xrpc/io.example.streamOne?countdown=5`,
         );
@@ -154,7 +154,7 @@ Deno.test({
         ]);
       });
 
-      await Deno.test("streams messages in a union", async () => {
+      Deno.test("streams messages in a union", async () => {
         const ws = new WebSocket(
           `ws://${addr}/xrpc/io.example.streamTwo?countdown=5`,
         );
@@ -175,7 +175,7 @@ Deno.test({
         ]);
       });
 
-      await Deno.test("resolves auth into handler", async () => {
+      Deno.test("resolves auth into handler", async () => {
         const ws = new WebSocket(
           `ws://${addr}/xrpc/io.example.streamAuth`,
           {
@@ -203,7 +203,7 @@ Deno.test({
         ]);
       });
 
-      await Deno.test("errors immediately on bad parameter", async () => {
+      Deno.test("errors immediately on bad parameter", async () => {
         const ws = new WebSocket(
           `ws://${addr}/xrpc/io.example.streamOne`,
         );
@@ -221,7 +221,7 @@ Deno.test({
         ]);
       });
 
-      await Deno.test("errors immediately on bad auth", async () => {
+      Deno.test("errors immediately on bad auth", async () => {
         const ws = new WebSocket(
           `ws://${addr}/xrpc/io.example.streamAuth`,
           {
@@ -245,7 +245,7 @@ Deno.test({
         ]);
       });
 
-      await Deno.test("does not websocket upgrade at bad endpoint", async () => {
+      Deno.test("does not websocket upgrade at bad endpoint", async () => {
         const ws = new WebSocket(`ws://${addr}/xrpc/does.not.exist`);
         await assertRejects(
           () =>
@@ -257,7 +257,7 @@ Deno.test({
         );
       });
 
-      await Deno.test("subscription consumer tests", async (t) => {
+      Deno.test("subscription consumer tests", async (t) => {
         await t.step("receives messages w/ skips", async () => {
           const sub = new Subscription({
             service: `ws://${addr}`,
@@ -366,7 +366,7 @@ Deno.test({
         });
       });
 
-      await Deno.test("closing websocket server while client connected", async (t) => {
+      Deno.test("closing websocket server while client connected", async (t) => {
         // First close the current server
         if (s) {
           await closeServer(s);

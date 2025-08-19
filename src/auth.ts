@@ -2,16 +2,11 @@ import * as ui8 from "uint8arrays";
 import * as common from "@atproto/common";
 import { MINUTE } from "@atproto/common";
 import * as crypto from "@atproto/crypto";
-import { AuthRequiredError } from "./types.ts";
+import { AuthRequiredError } from "./errors.ts";
 
 /**
- * Parameters for creating a service JWT key.
- * @property {string} iss - The issuer of the JWT (typically a DID)
- * @property {string} aud - The audience of the JWT (typically the service's DID)
- * @property {number} [iat] - Issued at timestamp in seconds. Defaults to current time.
- * @property {number} [exp] - Expiration timestamp in seconds. Defaults to iat + 1 minute.
- * @property {string | null} lxm - Lexicon method identifier. Used to restrict token to specific operations.
- * @property {crypto.Keypair} keypair - The keypair used to sign the JWT
+ * Parameters for creating a service JWT.
+ * Used for service-to-service authentication in XRPC systems.
  */
 type ServiceJwtParams = {
   iss: string;
@@ -23,21 +18,14 @@ type ServiceJwtParams = {
 };
 
 /**
- * JWT header fields.
- * @property {string} alg - The algorithm used to sign the JWT
- * @property {Record<string, unknown>} - Additional header fields
+ * JWT header structure containing algorithm and additional fields.
  */
 type ServiceJwtHeaders = {
   alg: string;
 } & Record<string, unknown>;
 
 /**
- * JWT payload fields.
- * @property {string} iss - The issuer of the JWT (typically a DID)
- * @property {string} aud - The audience of the JWT (typically the service's DID)
- * @property {number} exp - Expiration timestamp in seconds
- * @property {string} [lxm] - Optional lexicon method identifier
- * @property {string} [jti] - Optional JWT ID for uniqueness
+ * JWT payload structure containing standard and XRPC-specific claims.
  */
 type ServiceJwtPayload = {
   iss: string;
@@ -45,6 +33,7 @@ type ServiceJwtPayload = {
   exp: number;
   lxm?: string;
   jti?: string;
+  nonce?: string;
 };
 
 /**
@@ -52,8 +41,8 @@ type ServiceJwtPayload = {
  * The JWT includes standard claims (iss, aud, exp) and optional claims (lxm).
  * The token is signed using the provided keypair.
  *
- * @param {ServiceJwtParams} params - Parameters for creating the JWT
- * @returns {Promise<string>} A signed JWT string in the format: header.payload.signature
+ * @param params - Parameters for creating the JWT
+ * @returns A signed JWT string in the format: header.payload.signature
  *
  * @example
  * ```typescript
@@ -72,7 +61,7 @@ export const createServiceJwt = async (
   const iat = params.iat ?? Math.floor(Date.now() / 1e3);
   const exp = params.exp ?? iat + MINUTE / 1e3;
   const lxm = params.lxm ?? undefined;
-  const jti = await crypto.randomStr(16, "hex");
+  const jti = crypto.randomStr(16, "hex");
   const header = {
     typ: "JWT",
     alg: keypair.jwtAlg,
@@ -95,8 +84,8 @@ export const createServiceJwt = async (
  * Creates authorization headers containing a service JWT.
  * Useful for making authenticated HTTP requests to other services.
  *
- * @param {ServiceJwtParams} params - Parameters for creating the JWT
- * @returns {Promise<{headers: {authorization: string}}>} Object containing authorization header
+ * @param params - Parameters for creating the JWT
+ * @returns Object containing authorization header with Bearer token
  *
  * @example
  * ```typescript
@@ -119,8 +108,8 @@ export const createServiceAuthHeaders = async (
 
 /**
  * Converts a JSON object to a base64url-encoded string.
- * @param {Record<string, unknown>} json - The JSON object to encode
- * @returns {string} The base64url-encoded string
+ * @param json - The JSON object to encode
+ * @returns The base64url-encoded string
  * @private
  */
 const jsonToB64Url = (json: Record<string, unknown>): string => {
@@ -129,11 +118,11 @@ const jsonToB64Url = (json: Record<string, unknown>): string => {
 
 /**
  * Function type for verifying JWT signatures with a given key.
- * @param {string} key - The public key to verify against
- * @param {Uint8Array} msgBytes - The message bytes to verify
- * @param {Uint8Array} sigBytes - The signature bytes to verify
- * @param {string} alg - The algorithm used for signing
- * @returns {Promise<boolean>} Whether the signature is valid
+ * @param key The public key to verify against
+ * @param msgBytes The message bytes to verify
+ * @param sigBytes The signature bytes to verify
+ * @param alg The algorithm used for signing
+ * @returns Whether the signature is valid
  */
 export type VerifySignatureWithKeyFn = (
   key: string,
@@ -151,12 +140,12 @@ export type VerifySignatureWithKeyFn = (
  * - Lexicon method validation
  * - Signature verification with key rotation support
  *
- * @param {string} jwtStr - The JWT to verify
- * @param {string | null} ownDid - The expected audience (null to skip check)
- * @param {string | null} lxm - The expected lexicon method (null to skip check)
- * @param {Function} getSigningKey - Function to get the issuer's signing key
- * @param {VerifySignatureWithKeyFn} verifySignatureWithKey - Function to verify signatures
- * @returns {Promise<ServiceJwtPayload>} The verified JWT payload
+ * @param jwtStr - The JWT to verify
+ * @param ownDid - The expected audience (null to skip check)
+ * @param lxm - The expected lexicon method (null to skip check)
+ * @param getSigningKey - Function to get the issuer's signing key
+ * @param verifySignatureWithKey - Function to verify signatures
+ * @returns The verified JWT payload
  * @throws {AuthRequiredError} If verification fails
  */
 export const verifyJwt = async (
@@ -268,18 +257,18 @@ export const verifyJwt = async (
  * Default implementation of signature verification using @atproto/crypto.
  * Supports malleable signatures for compatibility.
  *
- * @param {string} key - The public key to verify against
- * @param {Uint8Array} msgBytes - The message bytes to verify
- * @param {Uint8Array} sigBytes - The signature bytes to verify
- * @param {string} alg - The algorithm used for signing
- * @returns {Promise<boolean>} Whether the signature is valid
+ * @param key - The public key to verify against
+ * @param msgBytes - The message bytes to verify
+ * @param sigBytes - The signature bytes to verify
+ * @param alg - The algorithm used for signing
+ * @returns Whether the signature is valid
  */
 export const cryptoVerifySignatureWithKey: VerifySignatureWithKeyFn = (
   key: string,
   msgBytes: Uint8Array,
   sigBytes: Uint8Array,
   alg: string,
-) => {
+): Promise<boolean> => {
   return crypto.verifySignature(key, msgBytes, sigBytes, {
     jwtAlg: alg,
     allowMalleableSig: true,
@@ -288,23 +277,23 @@ export const cryptoVerifySignatureWithKey: VerifySignatureWithKeyFn = (
 
 /**
  * Parses a base64url-encoded string into a JSON object.
- * @param {string} b64 - The base64url-encoded string
- * @returns {unknown} The parsed JSON object
+ * @param b64 - The base64url-encoded string
+ * @returns The parsed JSON object
  * @private
  */
-const parseB64UrlToJson = (b64: string) => {
+const parseB64UrlToJson = (b64: string): unknown => {
   return JSON.parse(common.b64UrlToUtf8(b64));
 };
 
 /**
  * Parses and validates a JWT header.
- * @param {string} b64 - The base64url-encoded header
- * @returns {ServiceJwtHeaders} The parsed and validated header
+ * @param b64 - The base64url-encoded header
+ * @returns The parsed and validated header
  * @throws {AuthRequiredError} If the header is invalid
  * @private
  */
 const parseHeader = (b64: string): ServiceJwtHeaders => {
-  const header = parseB64UrlToJson(b64);
+  const header = parseB64UrlToJson(b64) as ServiceJwtHeaders;
   if (!header || typeof header !== "object" || typeof header.alg !== "string") {
     throw new AuthRequiredError("poorly formatted jwt", "BadJwt");
   }
@@ -313,13 +302,13 @@ const parseHeader = (b64: string): ServiceJwtHeaders => {
 
 /**
  * Parses and validates a JWT payload.
- * @param {string} b64 - The base64url-encoded payload
- * @returns {ServiceJwtPayload} The parsed and validated payload
+ * @param b64 - The base64url-encoded payload
+ * @returns The parsed and validated payload
  * @throws {AuthRequiredError} If the payload is invalid
  * @private
  */
 const parsePayload = (b64: string): ServiceJwtPayload => {
-  const payload = parseB64UrlToJson(b64);
+  const payload = parseB64UrlToJson(b64) as ServiceJwtPayload;
   if (
     !payload ||
     typeof payload !== "object" ||
