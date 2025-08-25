@@ -16,7 +16,6 @@
     "hono": "jsr:@hono/hono@^4.7.10",
     "http-errors": "npm:http-errors@^2.0.0",
     "jose": "npm:jose@^6.0.11",
-    "mime-types": "npm:mime-types@^3.0.1",
     "multiformats": "npm:multiformats@^13.3.6",
     "rate-limiter-flexible": "npm:rate-limiter-flexible@^2.4.1",
     "uint8arrays": "npm:uint8arrays@3.0.0",
